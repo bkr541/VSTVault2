@@ -1,19 +1,3 @@
-export enum PluginCategory {
-  Synth = "Synth",
-  Sampler = "Sampler",
-  DrumMachine = "Drum Machine",
-  EQ = "EQ",
-  Compressor = "Compressor",
-  Limiter = "Limiter",
-  Reverb = "Reverb",
-  Delay = "Delay",
-  Distortion = "Distortion",
-  Modulation = "Modulation",
-  Utility = "Utility",
-  Analyzer = "Analyzer",
-  Unknown = "Unknown"
-}
-
 export type PluginFormatType = "VST2" | "VST3" | "AU" | "AAX";
 
 // Table: plugins
@@ -22,7 +6,7 @@ export interface PluginEntry {
   name: string;
   normalized_name: string;
   vendor: string;
-  category: PluginCategory;
+  category: string;
   favorite: boolean;
   hidden: boolean;
   description: string | null;
@@ -96,7 +80,7 @@ export interface ConsolidatedPlugin {
   name: string;
   normalized_name: string;
   vendor: string;
-  category: PluginCategory;
+  category: string;
   favorite: boolean;
   hidden: boolean;
   created_at: string;

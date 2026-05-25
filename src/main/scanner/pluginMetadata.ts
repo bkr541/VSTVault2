@@ -71,31 +71,30 @@ export function guessVendorFromPath(filePath: string): string {
   return "Unknown Vendor";
 }
 
-import { PluginCategory } from "../../types";
-
-const CATEGORY_RULES: { keys: string[]; category: PluginCategory }[] = [
-  { keys: ["reverb", "valhalla", "room", "hall", "plate", "shimmer", "ambience", "spaces"], category: PluginCategory.Reverb },
-  { keys: ["delay", "echo", "repeater", "tape delay", "pingpong"], category: PluginCategory.Delay },
-  { keys: ["compressor", "comp", "dynamics", "vca ", "fet ", "opto ", "cla-", "api-"], category: PluginCategory.Compressor },
-  { keys: ["limiter", "maximizer", "l1", "l2", "l3", "inflator", "ceiling"], category: PluginCategory.Limiter },
-  { keys: ["eq", "equalizer", "pro-q", "pro-q3", "parametric", "spectrum", "tilt"], category: PluginCategory.EQ },
-  { keys: ["synth", "serum", "massive", "vital", "diva", "sylenth", "nexus", "pigments", "phase plant", "omnisphere", "form ", "fm8", "operator", "alchemy"], category: PluginCategory.Synth },
-  { keys: ["sampler", "kontakt", "play", "omnisphere", "stylus", "battery", "auto sampler"], category: PluginCategory.Sampler },
-  { keys: ["drum", "kick", "snare", "percussion", "beat", "battery", "trigger", "hit"], category: PluginCategory.DrumMachine },
-  { keys: ["distortion", "drive", "saturator", "saturation", "overdrive", "decapitator", "trash", "fuzz", "amp sim", "guitar rig"], category: PluginCategory.Distortion },
-  { keys: ["chorus", "flanger", "phaser", "tremolo", "vibrato", "rotary", "dimension", "microshift", "ensemble", "mod "], category: PluginCategory.Modulation },
-  { keys: ["analyzer", "meter", "scope", "span", "loudness", "goniometer", "spectrogram", "insight", "tuner"], category: PluginCategory.Analyzer },
-  { keys: ["utility", "gain", "pan", "splitter", "matrix", "m/s", "phase align", "router", "trim"], category: PluginCategory.Utility },
+const CATEGORY_RULES: { keys: string[]; category: string }[] = [
+  { keys: ["reverb", "valhalla", "room", "hall", "plate", "shimmer", "ambience", "spaces"], category: "Reverb" },
+  { keys: ["delay", "echo", "repeater", "tape delay", "pingpong"], category: "Delay" },
+  { keys: ["compressor", "comp", "dynamics", "vca ", "fet ", "opto ", "cla-", "api-"], category: "Dynamics / Compressor" },
+  { keys: ["limiter", "maximizer", "l1", "l2", "l3", "inflator", "ceiling"], category: "Dynamics / Limiter" },
+  { keys: ["eq", "equalizer", "pro-q", "pro-q3", "parametric", "tilt"], category: "EQ" },
+  { keys: ["synth", "serum", "massive", "vital", "diva", "sylenth", "nexus", "pigments", "phase plant", "omnisphere", "fm8", "operator", "alchemy"], category: "Synthesizer" },
+  { keys: ["sampler", "kontakt", "stylus", "auto sampler"], category: "Instrument / Sample Playback" },
+  { keys: ["drum", "kick", "snare", "percussion", "beat", "battery", "trigger", "hit"], category: "Instrument / Drum Instrument" },
+  { keys: ["distortion", "drive", "overdrive", "decapitator", "trash", "fuzz", "amp sim", "guitar rig"], category: "Distortion" },
+  { keys: ["saturator", "saturation", "tape"], category: "Distortion / Saturation" },
+  { keys: ["chorus", "flanger", "phaser", "tremolo", "vibrato", "rotary", "dimension", "microshift", "ensemble"], category: "Modulation" },
+  { keys: ["analyzer", "meter", "scope", "span", "loudness", "goniometer", "spectrogram", "insight", "tuner"], category: "Metering" },
+  { keys: ["utility", "gain", "pan", "splitter", "matrix", "phase align", "router", "trim"], category: "Utility" },
 ];
 
-export function guessCategory(pluginName: string): PluginCategory {
+export function guessCategory(pluginName: string): string {
   const norm = pluginName.toLowerCase();
   for (const rule of CATEGORY_RULES) {
     if (rule.keys.some(k => norm.includes(k))) {
       return rule.category;
     }
   }
-  return PluginCategory.Unknown;
+  return "Unknown";
 }
 
 export function normalizeName(name: string): string {

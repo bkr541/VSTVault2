@@ -32,7 +32,6 @@ import type { User } from "@supabase/supabase-js";
 
 import {
   ConsolidatedPlugin,
-  PluginCategory,
   ScanFolderEntry,
   ScanHistoryEntry,
   DiscoveredPlugin,
@@ -193,7 +192,7 @@ export default function App() {
 
   // Inspector
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
-  const [inspectEditCategory, setInspectEditCategory] = useState<PluginCategory>(PluginCategory.Unknown);
+  const [inspectEditCategory, setInspectEditCategory] = useState<string>("");
   const [inspectEditTagsStr, setInspectEditTagsStr] = useState("");
   const [inspectEditNotes, setInspectEditNotes] = useState("");
   const [inspectEditName, setInspectEditName] = useState("");
@@ -283,7 +282,7 @@ export default function App() {
         name: p.name,
         normalized_name: p.normalized_name ?? "",
         vendor: p.vendor,
-        category: p.category as PluginCategory,
+        category: p.category ?? "",
         favorite: p.favorite ?? false,
         hidden: p.hidden ?? false,
         created_at: p.created_at,
@@ -321,13 +320,15 @@ export default function App() {
 
   // ── Derived state ─────────────────────────────────────────────────────────
 
-  const { counts, tagCounts, filteredPlugins } = useMemo(() => {
+  const { counts, tagCounts, filteredPlugins, uniqueCategories } = useMemo(() => {
     const visible = allPlugins.filter(p => !p.hidden);
 
-    const categories = Object.values(PluginCategory).reduce((acc, cat) => {
-      acc[cat] = visible.filter(p => p.category === cat).length;
-      return acc;
-    }, {} as Record<string, number>);
+    const categoryMap = new Map<string, number>();
+    for (const p of visible) {
+      if (p.category) categoryMap.set(p.category, (categoryMap.get(p.category) ?? 0) + 1);
+    }
+    const uniqueCategories = Array.from(categoryMap.keys()).sort((a, b) => a.localeCompare(b));
+    const categories: Record<string, number> = Object.fromEntries(categoryMap);
 
     const tagMap = new Map<string, number>();
     for (const p of visible) {
@@ -370,7 +371,7 @@ export default function App() {
       }
     });
 
-    return { counts, tagCounts, filteredPlugins: result };
+    return { counts, tagCounts, filteredPlugins: result, uniqueCategories };
   }, [allPlugins, filterHidden, filterFavorites, selectedCategory, selectedTag, search, sortBy]);
 
   const vendorGroups = useMemo(() => {
@@ -755,7 +756,7 @@ export default function App() {
 
   const activePlugin = filteredPlugins.find(p => p.id === selectedPluginId) ??
     allPlugins.find(p => p.id === selectedPluginId);
-  const categoryOptions = Object.values(PluginCategory).map(cat => ({ value: cat, label: cat }));
+  const categoryOptions = uniqueCategories.map(cat => ({ value: cat, label: cat }));
 
   return (
     <div className="flex h-screen bg-[#F7F8FA] font-sans antialiased overflow-hidden">
@@ -1228,7 +1229,7 @@ export default function App() {
                     label="Category"
                     options={categoryOptions}
                     value={inspectEditCategory}
-                    onChange={e => { setInspectEditCategory(e.target.value as PluginCategory); setHasEditChanges(true); }}
+                    onChange={e => { setInspectEditCategory(e.target.value); setHasEditChanges(true); }}
                   />
                   <p className="text-[10px] text-gray-400 mt-1 select-none font-medium">
                     Auto-detected; override as needed.
