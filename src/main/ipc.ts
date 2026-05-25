@@ -37,11 +37,16 @@ export function registerIpcHandlers() {
     if (fs.existsSync(filePath)) {
       shell.showItemInFolder(filePath);
     } else {
-      // Try opening the parent folder if the file itself doesn't exist
       const parent = path.dirname(filePath);
       if (fs.existsSync(parent)) {
         shell.openPath(parent);
       }
+    }
+  });
+
+  ipcMain.handle("shell:open-url", async (_event, url: string) => {
+    if (url.startsWith("https://") || url.startsWith("http://")) {
+      shell.openExternal(url);
     }
   });
 

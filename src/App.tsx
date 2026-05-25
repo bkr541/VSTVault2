@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   FolderPlus,
-  Search,
+  FolderOpen,
   Activity,
   Heart,
   EyeOff,
@@ -13,7 +13,6 @@ import {
   AlertTriangle,
   Plus,
   Trash2,
-  FolderOpen,
   Music,
   Settings,
   Check,
@@ -23,7 +22,10 @@ import {
   LogOut,
   Loader2,
   ChevronRight,
-  X,
+  Star,
+  Zap,
+  BookOpen,
+  Globe,
 } from "lucide-react";
 
 import { supabase } from "./renderer/lib/supabaseClient";
@@ -36,17 +38,29 @@ import {
   ScanHistoryEntry,
   DiscoveredPlugin,
   ScanRunResult,
+  CategoryEntry,
+  SubcategoryEntry,
+  SoundSourceEntry,
+  ProducerProblemEntry,
+  DesiredResultEntry,
+  ProductionStageEntry,
+  PluginUseCaseEntry,
 } from "./types";
+import { DEFAULT_CATEGORIES } from "./renderer/lib/categoryDefaults";
+import {
+  DEFAULT_SOUND_SOURCES,
+  DEFAULT_PRODUCER_PROBLEMS,
+  DEFAULT_DESIRED_RESULTS,
+  DEFAULT_PRODUCTION_STAGES,
+  DEFAULT_USE_CASE_MAPPINGS,
+} from "./renderer/lib/workflowDefaults";
+import { FindByProblem } from "./renderer/components/FindByProblem";
+import { PluginInspector } from "./renderer/components/PluginInspector";
 
 import { Button } from "./renderer/components/ui/Button";
-import { Input } from "./renderer/components/ui/Input";
-import { Textarea } from "./renderer/components/ui/Textarea";
-import { Select } from "./renderer/components/ui/Select";
-import { Toggle } from "./renderer/components/ui/Toggle";
 import { Card } from "./renderer/components/ui/Card";
 import { Badge } from "./renderer/components/ui/Badge";
 import { Modal } from "./renderer/components/ui/Modal";
-import { Table } from "./renderer/components/ui/Table";
 import { SearchInput } from "./renderer/components/ui/SearchInput";
 import { EmptyState } from "./renderer/components/ui/EmptyState";
 import { Tooltip } from "./renderer/components/ui/Tooltip";
@@ -182,22 +196,59 @@ export default function App() {
 
   // UX filters / navigation
   const [search, setSearch] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState<string>("All");
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [selectedSubcategoryId, setSelectedSubcategoryId] = useState<string | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [filterFavorites, setFilterFavorites] = useState(false);
   const [filterHidden, setFilterHidden] = useState(false);
+  const [metaView, setMetaView] = useState<"none" | "containers" | "unknown-vendor" | "needs-review" | "find-by-problem" | "missing-description" | "missing-manual" | "missing-website" | "missing-image" | "missing-rating" | "missing-use-cases">("none");
   const [sortBy, setSortBy] = useState("name-asc");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [expandedVendors, setExpandedVendors] = useState<Set<string>>(new Set());
+  const [expandedSidebarCategories, setExpandedSidebarCategories] = useState<Set<string>>(new Set());
+
+  // Classification data
+  const [allCategories, setAllCategories] = useState<CategoryEntry[]>([]);
+  const [allSubcategories, setAllSubcategories] = useState<SubcategoryEntry[]>([]);
+
+  // Workflow intelligence
+  const [allSoundSources, setAllSoundSources] = useState<SoundSourceEntry[]>([]);
+  const [allProblems, setAllProblems] = useState<ProducerProblemEntry[]>([]);
+  const [allResults, setAllResults] = useState<DesiredResultEntry[]>([]);
+  const [allStages, setAllStages] = useState<ProductionStageEntry[]>([]);
+  const [allUseCases, setAllUseCases] = useState<PluginUseCaseEntry[]>([]);
 
   // Inspector
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
-  const [inspectEditCategory, setInspectEditCategory] = useState<string>("");
+  const [inspectEditCategoryId, setInspectEditCategoryId] = useState<string>("");
+  const [inspectEditSubcategoryId, setInspectEditSubcategoryId] = useState<string>("");
   const [inspectEditTagsStr, setInspectEditTagsStr] = useState("");
   const [inspectEditNotes, setInspectEditNotes] = useState("");
   const [inspectEditName, setInspectEditName] = useState("");
   const [inspectEditVendor, setInspectEditVendor] = useState("");
   const [hasEditChanges, setHasEditChanges] = useState(false);
+
+  // Inspector: personal fields
+  const [inspectEditRating, setInspectEditRating] = useState(0);
+  const [inspectEditFavoriteUseCase, setInspectEditFavoriteUseCase] = useState("");
+  const [inspectEditComplexity, setInspectEditComplexity] = useState("");
+  const [inspectEditCharacterNotes, setInspectEditCharacterNotes] = useState("");
+  const [inspectEditRoutingNotes, setInspectEditRoutingNotes] = useState("");
+  const [inspectEditTutorialUrl, setInspectEditTutorialUrl] = useState("");
+  const [inspectEditDescription, setInspectEditDescription] = useState("");
+  const [inspectEditWebsiteUrl, setInspectEditWebsiteUrl] = useState("");
+  const [inspectEditManualUrl, setInspectEditManualUrl] = useState("");
+  const [inspectEditImageUrl, setInspectEditImageUrl] = useState("");
+
+  // Inspector: add use case form
+  const [showAddUseCase, setShowAddUseCase] = useState(false);
+  const [addUcSourceId, setAddUcSourceId] = useState("");
+  const [addUcProblemId, setAddUcProblemId] = useState("");
+  const [addUcResultId, setAddUcResultId] = useState("");
+  const [addUcStageId, setAddUcStageId] = useState("");
+  const [addUcRating, setAddUcRating] = useState(0);
+  const [addUcNotes, setAddUcNotes] = useState("");
+  const [addUcRecommended, setAddUcRecommended] = useState(false);
 
   // Scan
   const [isScanning, setIsScanning] = useState(false);
@@ -241,17 +292,19 @@ export default function App() {
 
   const loadAllData = async () => {
     setDataLoading(true);
-    await Promise.all([loadPlugins(), loadScanFolders(), loadScanHistory()]);
+    await Promise.all([loadPlugins(), loadScanFolders(), loadScanHistory(), loadCategoriesAndSeed()]);
+    await loadWorkflowDataAndSeed();
     setDataLoading(false);
   };
 
   const loadPlugins = async () => {
-    const [pluginsRes, formatsRes, pluginTagsRes, tagsRes, notesRes] = await Promise.all([
+    const [pluginsRes, formatsRes, pluginTagsRes, tagsRes, notesRes, classificationsRes] = await Promise.all([
       supabase.from("plugins").select("*").order("name"),
       supabase.from("plugin_formats").select("*"),
       supabase.from("plugin_tags").select("*"),
       supabase.from("tags").select("*"),
       supabase.from("notes").select("*"),
+      supabase.from("plugin_classifications").select("*"),
     ]);
 
     if (pluginsRes.error) console.error("loadPlugins error:", pluginsRes.error);
@@ -261,6 +314,7 @@ export default function App() {
     const pluginTags = pluginTagsRes.data ?? [];
     const tags = tagsRes.data ?? [];
     const notes = notesRes.data ?? [];
+    const classifications = classificationsRes.data ?? [];
 
     const consolidated: ConsolidatedPlugin[] = plugins.map(p => {
       const pFormats = formats
@@ -271,11 +325,25 @@ export default function App() {
           file_name: f.file_name ?? null,
           file_size: f.file_size ?? null,
           bundle_id: f.bundle_id ?? null,
+          version: f.version ?? null,
+          architecture: f.architecture ?? null,
+          last_modified_at: f.last_modified_at ?? null,
+          scan_verified_at: f.scan_verified_at ?? null,
         }));
 
       const tagIds = pluginTags.filter(pt => pt.plugin_id === p.id).map(pt => pt.tag_id);
       const pTags = tags.filter(t => tagIds.includes(t.id)).map(t => t.name);
       const pNote = notes.find(n => n.plugin_id === p.id)?.body ?? null;
+      const pClassifications = classifications
+        .filter(c => c.plugin_id === p.id)
+        .map(c => ({
+          id: c.id,
+          categoryId: c.category_id,
+          subcategoryId: c.subcategory_id ?? null,
+          isPrimary: c.is_primary,
+          source: c.source ?? null,
+          confidence: c.confidence ?? null,
+        }));
 
       return {
         id: p.id,
@@ -285,11 +353,26 @@ export default function App() {
         category: p.category ?? "",
         favorite: p.favorite ?? false,
         hidden: p.hidden ?? false,
+        is_container_shell: p.is_container_shell ?? false,
+        metadata_confidence: p.metadata_confidence ?? null,
+        vendor_verified: p.vendor_verified ?? false,
+        product_family: p.product_family ?? null,
+        personal_rating: p.personal_rating ?? null,
+        favorite_use_case: p.favorite_use_case ?? null,
+        complexity_level: p.complexity_level ?? null,
+        character_notes: p.character_notes ?? null,
+        routing_notes: p.routing_notes ?? null,
+        tutorial_url: p.tutorial_url ?? null,
+        description: p.description ?? null,
+        website_url: p.website_url ?? null,
+        manual_url: p.manual_url ?? null,
+        image_url: p.image_url ?? null,
         created_at: p.created_at,
         updated_at: p.updated_at,
         formats: pFormats,
         tags: pTags,
         notes: pNote,
+        classifications: pClassifications,
       };
     });
 
@@ -308,6 +391,53 @@ export default function App() {
     );
   };
 
+  const seedDefaultCategories = async (userId: string) => {
+    const { data: insertedCats } = await supabase
+      .from("categories")
+      .insert(DEFAULT_CATEGORIES.map(cat => ({
+        user_id: userId, name: cat.name, slug: cat.slug, sort_order: cat.sortOrder,
+      })))
+      .select("id, slug");
+
+    if (!insertedCats) return;
+    const catSlugToId = new Map(insertedCats.map(c => [c.slug, c.id]));
+
+    const allSubs = DEFAULT_CATEGORIES.flatMap(cat =>
+      cat.subcategories.map(sub => ({
+        user_id: userId,
+        category_id: catSlugToId.get(cat.slug)!,
+        name: sub.name,
+        slug: sub.slug,
+        sort_order: sub.sortOrder,
+      }))
+    ).filter(s => s.category_id);
+
+    if (allSubs.length > 0) {
+      await supabase.from("subcategories").insert(allSubs);
+    }
+  };
+
+  const loadCategoriesAndSeed = async () => {
+    if (!user) return;
+    const [catsRes, subcatsRes] = await Promise.all([
+      supabase.from("categories").select("*").order("sort_order"),
+      supabase.from("subcategories").select("*").order("sort_order"),
+    ]);
+
+    if (!catsRes.data || catsRes.data.length === 0) {
+      await seedDefaultCategories(user.id);
+      const [catsRes2, subcatsRes2] = await Promise.all([
+        supabase.from("categories").select("*").order("sort_order"),
+        supabase.from("subcategories").select("*").order("sort_order"),
+      ]);
+      setAllCategories((catsRes2.data ?? []) as CategoryEntry[]);
+      setAllSubcategories((subcatsRes2.data ?? []) as SubcategoryEntry[]);
+    } else {
+      setAllCategories((catsRes.data ?? []) as CategoryEntry[]);
+      setAllSubcategories((subcatsRes.data ?? []) as SubcategoryEntry[]);
+    }
+  };
+
   const loadScanHistory = async () => {
     const { data, error } = await supabase
       .from("scan_history")
@@ -318,17 +448,163 @@ export default function App() {
     if (data && data.length > 0) setLastScan(data[0] as ScanHistoryEntry);
   };
 
+  const loadWorkflowDataAndSeed = async () => {
+    if (!user) return;
+
+    const [sourcesRes, problemsRes, resultsRes, stagesRes] = await Promise.all([
+      supabase.from("sound_sources").select("*").order("sort_order"),
+      supabase.from("producer_problems").select("*").order("sort_order"),
+      supabase.from("desired_results").select("*").order("sort_order"),
+      supabase.from("production_stages").select("*").order("sort_order"),
+    ]);
+
+    let sources = (sourcesRes.data ?? []) as SoundSourceEntry[];
+    let problems = (problemsRes.data ?? []) as ProducerProblemEntry[];
+    let results = (resultsRes.data ?? []) as DesiredResultEntry[];
+    let stages = (stagesRes.data ?? []) as ProductionStageEntry[];
+
+    if (sources.length === 0) {
+      const { data: s } = await supabase.from("sound_sources").insert(
+        DEFAULT_SOUND_SOURCES.map(x => ({ user_id: user.id, name: x.name, slug: x.slug, sort_order: x.sortOrder }))
+      ).select("*");
+      sources = (s ?? []) as SoundSourceEntry[];
+    }
+    if (problems.length === 0) {
+      const { data: p } = await supabase.from("producer_problems").insert(
+        DEFAULT_PRODUCER_PROBLEMS.map(x => ({ user_id: user.id, name: x.name, slug: x.slug, sort_order: x.sortOrder }))
+      ).select("*");
+      problems = (p ?? []) as ProducerProblemEntry[];
+    }
+    if (results.length === 0) {
+      const { data: r } = await supabase.from("desired_results").insert(
+        DEFAULT_DESIRED_RESULTS.map(x => ({ user_id: user.id, name: x.name, slug: x.slug, sort_order: x.sortOrder }))
+      ).select("*");
+      results = (r ?? []) as DesiredResultEntry[];
+    }
+    if (stages.length === 0) {
+      const { data: st } = await supabase.from("production_stages").insert(
+        DEFAULT_PRODUCTION_STAGES.map(x => ({ user_id: user.id, name: x.name, slug: x.slug, sort_order: x.sortOrder }))
+      ).select("*");
+      stages = (st ?? []) as ProductionStageEntry[];
+    }
+
+    setAllSoundSources(sources);
+    setAllProblems(problems);
+    setAllResults(results);
+    setAllStages(stages);
+
+    // Load existing use cases
+    const { data: ucData } = await supabase.from("plugin_use_cases").select("*");
+    const existingUcs = (ucData ?? []) as PluginUseCaseEntry[];
+
+    // Seed use cases for known plugins (skip exact-match seeded duplicates)
+    if (sources.length > 0 && problems.length > 0) {
+      const { data: pluginsData } = await supabase
+        .from("plugins")
+        .select("id, normalized_name")
+        .eq("is_container_shell", false);
+      const allPluginsForSeed = pluginsData ?? [];
+
+      const toInsert: object[] = [];
+      for (const mapping of DEFAULT_USE_CASE_MAPPINGS) {
+        const sourceId = sources.find(s => s.slug === mapping.soundSourceSlug)?.id;
+        const problemId = problems.find(p => p.slug === mapping.problemSlug)?.id ?? null;
+        const resultId = results.find(r => r.slug === mapping.resultSlug)?.id ?? null;
+        const stageId = stages.find(s => s.slug === mapping.stageSlug)?.id ?? null;
+        if (!sourceId) continue;
+
+        const matchingPlugins = allPluginsForSeed.filter(p =>
+          (p.normalized_name as string).includes(mapping.normalizedNameContains)
+        );
+        for (const plugin of matchingPlugins) {
+          const alreadyExists = existingUcs.some(
+            uc =>
+              uc.plugin_id === plugin.id &&
+              uc.sound_source_id === sourceId &&
+              uc.problem_id === problemId &&
+              uc.desired_result_id === resultId &&
+              uc.source === "seeded"
+          );
+          if (!alreadyExists) {
+            toInsert.push({
+              user_id: user.id,
+              plugin_id: plugin.id,
+              sound_source_id: sourceId,
+              problem_id: problemId,
+              desired_result_id: resultId,
+              production_stage_id: stageId,
+              is_recommended: mapping.isRecommended,
+              notes: mapping.notes ?? null,
+              source: "seeded",
+              confidence: "suggested",
+            });
+          }
+        }
+      }
+
+      if (toInsert.length > 0) {
+        await supabase.from("plugin_use_cases").insert(toInsert);
+        const { data: refreshed } = await supabase.from("plugin_use_cases").select("*");
+        setAllUseCases((refreshed ?? []) as PluginUseCaseEntry[]);
+        return;
+      }
+    }
+
+    setAllUseCases(existingUcs);
+  };
+
+  const handleSaveUseCase = async () => {
+    if (!user || !selectedPluginId || !addUcSourceId) return;
+    const { error } = await supabase.from("plugin_use_cases").insert({
+      user_id: user.id,
+      plugin_id: selectedPluginId,
+      sound_source_id: addUcSourceId || null,
+      problem_id: addUcProblemId || null,
+      desired_result_id: addUcResultId || null,
+      production_stage_id: addUcStageId || null,
+      effectiveness_rating: addUcRating || null,
+      is_recommended: addUcRecommended,
+      notes: addUcNotes.trim() || null,
+      source: "manual",
+      confidence: "manual",
+    });
+    if (error) { showToast("Failed to save use case.", "error"); return; }
+    showToast("Use case added.");
+    setShowAddUseCase(false);
+    setAddUcSourceId(""); setAddUcProblemId(""); setAddUcResultId("");
+    setAddUcStageId(""); setAddUcRating(0); setAddUcNotes(""); setAddUcRecommended(false);
+    const { data } = await supabase.from("plugin_use_cases").select("*");
+    setAllUseCases((data ?? []) as PluginUseCaseEntry[]);
+  };
+
+  const handleCancelUseCase = () => {
+    setShowAddUseCase(false);
+    setAddUcSourceId(""); setAddUcProblemId(""); setAddUcResultId("");
+    setAddUcStageId(""); setAddUcRating(0); setAddUcNotes(""); setAddUcRecommended(false);
+  };
+
+  const handleDeleteUseCase = async (ucId: string) => {
+    const { error } = await supabase.from("plugin_use_cases").delete().eq("id", ucId);
+    if (error) { showToast("Failed to delete use case.", "error"); return; }
+    setAllUseCases(prev => prev.filter(uc => uc.id !== ucId));
+  };
+
+  const handleUpdateUseCaseRating = async (ucId: string, rating: number) => {
+    const newRating = allUseCases.find(uc => uc.id === ucId)?.effectiveness_rating === rating ? null : rating;
+    const { error } = await supabase
+      .from("plugin_use_cases")
+      .update({ effectiveness_rating: newRating, source: "manual", confidence: "manual" })
+      .eq("id", ucId);
+    if (error) { showToast("Failed to update rating.", "error"); return; }
+    setAllUseCases(prev => prev.map(uc => uc.id === ucId ? { ...uc, effectiveness_rating: newRating, source: "manual", confidence: "manual" } : uc));
+  };
+
   // ── Derived state ─────────────────────────────────────────────────────────
 
-  const { counts, tagCounts, filteredPlugins, uniqueCategories } = useMemo(() => {
-    const visible = allPlugins.filter(p => !p.hidden);
-
-    const categoryMap = new Map<string, number>();
-    for (const p of visible) {
-      if (p.category) categoryMap.set(p.category, (categoryMap.get(p.category) ?? 0) + 1);
-    }
-    const uniqueCategories = Array.from(categoryMap.keys()).sort((a, b) => a.localeCompare(b));
-    const categories: Record<string, number> = Object.fromEntries(categoryMap);
+  const { counts, tagCounts, filteredPlugins, catPluginCounts, pluginsWithUcsSet } = useMemo(() => {
+    // Visible = non-hidden, non-container (used for standard counts and category counts)
+    const visible = allPlugins.filter(p => !p.hidden && !p.is_container_shell);
+    const pluginsWithUcsSet = new Set(allUseCases.map(uc => uc.plugin_id));
 
     const tagMap = new Map<string, number>();
     for (const p of visible) {
@@ -338,20 +614,83 @@ export default function App() {
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
+    // Classification-based counts for the hierarchical sidebar
+    const catCounts = new Map<string, number>();
+    const subcatCounts = new Map<string, number>();
+    for (const p of visible) {
+      const seenCats = new Set<string>();
+      const seenSubcats = new Set<string>();
+      for (const c of p.classifications) {
+        if (!seenCats.has(c.categoryId)) {
+          catCounts.set(c.categoryId, (catCounts.get(c.categoryId) ?? 0) + 1);
+          seenCats.add(c.categoryId);
+        }
+        if (c.subcategoryId && !seenSubcats.has(c.subcategoryId)) {
+          subcatCounts.set(c.subcategoryId, (subcatCounts.get(c.subcategoryId) ?? 0) + 1);
+          seenSubcats.add(c.subcategoryId);
+        }
+      }
+    }
+
     const counts = {
       total: visible.length,
       favorites: visible.filter(p => p.favorite).length,
-      hidden: allPlugins.filter(p => p.hidden).length,
-      categories,
+      hidden: allPlugins.filter(p => p.hidden && !p.is_container_shell).length,
+      containers: allPlugins.filter(p => p.is_container_shell).length,
+      unknownVendor: visible.filter(p => p.vendor === 'Unknown Vendor').length,
+      needsReview: visible.filter(p => p.vendor === 'Unknown Vendor' || p.classifications.length === 0).length,
+      missingDescription: visible.filter(p => !p.description).length,
+      missingManual: visible.filter(p => !p.manual_url).length,
+      missingWebsite: visible.filter(p => !p.website_url).length,
+      missingImage: visible.filter(p => !p.image_url).length,
+      missingRating: visible.filter(p => !p.personal_rating).length,
+      missingUseCases: visible.filter(p => !pluginsWithUcsSet.has(p.id)).length,
+      withDescription: visible.filter(p => !!p.description).length,
+      withManual: visible.filter(p => !!p.manual_url).length,
+      withWebsite: visible.filter(p => !!p.website_url).length,
+      withImage: visible.filter(p => !!p.image_url).length,
+      withRating: visible.filter(p => !!p.personal_rating).length,
+      withUseCases: visible.filter(p => pluginsWithUcsSet.has(p.id)).length,
     };
 
-    let result = filterHidden
-      ? allPlugins.filter(p => p.hidden)
-      : allPlugins.filter(p => !p.hidden);
+    let result: ConsolidatedPlugin[];
 
-    if (filterFavorites) result = result.filter(p => p.favorite);
-    if (selectedCategory !== "All") result = result.filter(p => p.category === selectedCategory);
-    if (selectedTag) result = result.filter(p => p.tags.includes(selectedTag));
+    // MetaView filters are exclusive
+    if (metaView === 'containers') {
+      result = allPlugins.filter(p => p.is_container_shell);
+    } else if (metaView === 'unknown-vendor') {
+      result = allPlugins.filter(p => !p.is_container_shell && p.vendor === 'Unknown Vendor');
+    } else if (metaView === 'needs-review') {
+      result = allPlugins.filter(p => !p.is_container_shell && (p.vendor === 'Unknown Vendor' || p.classifications.length === 0));
+    } else if (metaView === 'missing-description') {
+      result = allPlugins.filter(p => !p.is_container_shell && !p.hidden && !p.description);
+    } else if (metaView === 'missing-manual') {
+      result = allPlugins.filter(p => !p.is_container_shell && !p.hidden && !p.manual_url);
+    } else if (metaView === 'missing-website') {
+      result = allPlugins.filter(p => !p.is_container_shell && !p.hidden && !p.website_url);
+    } else if (metaView === 'missing-image') {
+      result = allPlugins.filter(p => !p.is_container_shell && !p.hidden && !p.image_url);
+    } else if (metaView === 'missing-rating') {
+      result = allPlugins.filter(p => !p.is_container_shell && !p.hidden && !p.personal_rating);
+    } else if (metaView === 'missing-use-cases') {
+      result = allPlugins.filter(p => !p.is_container_shell && !p.hidden && !pluginsWithUcsSet.has(p.id));
+    } else if (filterHidden) {
+      result = allPlugins.filter(p => p.hidden && !p.is_container_shell);
+    } else {
+      result = allPlugins.filter(p => !p.hidden && !p.is_container_shell);
+      if (filterFavorites) result = result.filter(p => p.favorite);
+      if (selectedCategoryId) {
+        result = result.filter(p =>
+          p.classifications.some(c => {
+            if (c.categoryId !== selectedCategoryId) return false;
+            if (selectedSubcategoryId && c.subcategoryId !== selectedSubcategoryId) return false;
+            return true;
+          })
+        );
+      }
+      if (selectedTag) result = result.filter(p => p.tags.includes(selectedTag));
+    }
+
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(
@@ -371,8 +710,8 @@ export default function App() {
       }
     });
 
-    return { counts, tagCounts, filteredPlugins: result, uniqueCategories };
-  }, [allPlugins, filterHidden, filterFavorites, selectedCategory, selectedTag, search, sortBy]);
+    return { counts, tagCounts, filteredPlugins: result, catPluginCounts: { catCounts, subcatCounts }, pluginsWithUcsSet };
+  }, [allPlugins, allUseCases, filterHidden, filterFavorites, metaView, selectedCategoryId, selectedSubcategoryId, selectedTag, search, sortBy]);
 
   const vendorGroups = useMemo(() => {
     const groups = new Map<string, ConsolidatedPlugin[]>();
@@ -402,6 +741,24 @@ export default function App() {
     setExpandedVendors(new Set());
   }, []);
 
+  const clearAllFilters = useCallback(() => {
+    setFilterFavorites(false);
+    setFilterHidden(false);
+    setMetaView("none");
+    setSelectedCategoryId(null);
+    setSelectedSubcategoryId(null);
+    setSelectedTag(null);
+  }, []);
+
+  const activateMetaView = useCallback((view: "containers" | "unknown-vendor" | "needs-review" | "missing-description" | "missing-manual" | "missing-website" | "missing-image" | "missing-rating" | "missing-use-cases") => {
+    setFilterFavorites(false);
+    setFilterHidden(false);
+    setSelectedCategoryId(null);
+    setSelectedSubcategoryId(null);
+    setSelectedTag(null);
+    setMetaView(view);
+  }, []);
+
   const showToast = useCallback((msg: string, type: "success" | "error" | "info" = "success") => {
     setToastMessage(msg);
     setToastType(type);
@@ -414,10 +771,23 @@ export default function App() {
     setSelectedPluginId(p.id);
     setInspectEditName(p.name);
     setInspectEditVendor(p.vendor);
-    setInspectEditCategory(p.category);
+    const primaryClass = p.classifications.find(c => c.isPrimary);
+    setInspectEditCategoryId(primaryClass?.categoryId ?? "");
+    setInspectEditSubcategoryId(primaryClass?.subcategoryId ?? "");
     setInspectEditTagsStr(p.tags.join(", "));
     setInspectEditNotes(p.notes ?? "");
+    setInspectEditRating(p.personal_rating ?? 0);
+    setInspectEditFavoriteUseCase(p.favorite_use_case ?? "");
+    setInspectEditComplexity(p.complexity_level ?? "");
+    setInspectEditCharacterNotes(p.character_notes ?? "");
+    setInspectEditRoutingNotes(p.routing_notes ?? "");
+    setInspectEditTutorialUrl(p.tutorial_url ?? "");
+    setInspectEditDescription(p.description ?? "");
+    setInspectEditWebsiteUrl(p.website_url ?? "");
+    setInspectEditManualUrl(p.manual_url ?? "");
+    setInspectEditImageUrl(p.image_url ?? "");
     setHasEditChanges(false);
+    setShowAddUseCase(false);
   };
 
   const handleToggleFavorite = async (pId: string) => {
@@ -454,13 +824,34 @@ export default function App() {
       .map(t => t.trim())
       .filter(t => t.length > 0);
 
+    const activeForEdit = allPlugins.find(p => p.id === selectedPluginId);
+    const vendorChanged = inspectEditVendor !== activeForEdit?.vendor;
+    const primaryClass = activeForEdit?.classifications.find(c => c.isPrimary);
+    const classificationChanged =
+      inspectEditCategoryId !== (primaryClass?.categoryId ?? "") ||
+      inspectEditSubcategoryId !== (primaryClass?.subcategoryId ?? "");
+
+    // Derive a backwards-compat category string from the selected category
+    const selectedCatName = allCategories.find(c => c.id === inspectEditCategoryId)?.name ?? activeForEdit?.category ?? "";
+
     const { error: pluginError } = await supabase
       .from("plugins")
       .update({
         name: inspectEditName,
         vendor: inspectEditVendor,
-        category: inspectEditCategory,
+        category: selectedCatName,
+        personal_rating: inspectEditRating || null,
+        favorite_use_case: inspectEditFavoriteUseCase.trim() || null,
+        complexity_level: inspectEditComplexity || null,
+        character_notes: inspectEditCharacterNotes.trim() || null,
+        routing_notes: inspectEditRoutingNotes.trim() || null,
+        tutorial_url: inspectEditTutorialUrl.trim() || null,
+        description: inspectEditDescription.trim() || null,
+        website_url: inspectEditWebsiteUrl.trim() || null,
+        manual_url: inspectEditManualUrl.trim() || null,
+        image_url: inspectEditImageUrl.trim() || null,
         updated_at: new Date().toISOString(),
+        ...((vendorChanged || classificationChanged) ? { metadata_confidence: 'manual', vendor_verified: true } : {}),
       })
       .eq("id", selectedPluginId);
 
@@ -488,6 +879,28 @@ export default function App() {
       }
     } else if (existingNote) {
       await supabase.from("notes").delete().eq("id", existingNote.id);
+    }
+
+    // Update primary classification if changed
+    if (inspectEditCategoryId && classificationChanged) {
+      if (primaryClass) {
+        await supabase.from("plugin_classifications").update({
+          category_id: inspectEditCategoryId,
+          subcategory_id: inspectEditSubcategoryId || null,
+          source: 'manual',
+          confidence: 'manual',
+        }).eq("id", primaryClass.id);
+      } else {
+        await supabase.from("plugin_classifications").insert({
+          plugin_id: selectedPluginId,
+          category_id: inspectEditCategoryId,
+          subcategory_id: inspectEditSubcategoryId || null,
+          is_primary: true,
+          source: 'manual',
+          confidence: 'manual',
+          user_id: user.id,
+        });
+      }
     }
 
     // Update tags
@@ -551,7 +964,7 @@ export default function App() {
 
     try {
       const result = await window.vstVault.scanPlugins({ folders: enabledFolders, mode });
-      const added = await processScanResults(result, user.id);
+      const added = await processScanResults(result, user.id, allCategories, allSubcategories);
 
       if (historyRow) {
         await supabase.from("scan_history").update({
@@ -579,7 +992,12 @@ export default function App() {
     }
   };
 
-  const processScanResults = async (result: ScanRunResult, userId: string): Promise<number> => {
+  const processScanResults = async (
+    result: ScanRunResult,
+    userId: string,
+    categories: CategoryEntry[],
+    subcategories: SubcategoryEntry[],
+  ): Promise<number> => {
     // Group discovered plugins by normalized name for deduplication
     const groups = new Map<string, DiscoveredPlugin[]>();
     for (const d of result.discovered) {
@@ -609,6 +1027,10 @@ export default function App() {
             category: first.category,
             favorite: false,
             hidden: false,
+            is_container_shell: first.isContainerShell,
+            metadata_confidence: first.metadataConfidence,
+            vendor_verified: first.metadataConfidence === 'verified',
+            product_family: first.productFamily ?? null,
             user_id: userId,
           })
           .select("id")
@@ -622,8 +1044,44 @@ export default function App() {
         added++;
       } else {
         pluginId = existing.id;
+        // Only update vendor/category/confidence from scan if the user hasn't manually overridden them
+        if (existing.metadata_confidence !== 'manual' && first.metadataConfidence === 'verified') {
+          await supabase.from("plugins").update({
+            vendor: first.vendor,
+            category: first.category,
+            is_container_shell: first.isContainerShell,
+            metadata_confidence: 'verified',
+            vendor_verified: true,
+            product_family: first.productFamily ?? null,
+            updated_at: new Date().toISOString(),
+          }).eq("id", pluginId);
+        }
       }
 
+      // Create primary classification for known products (only if none exists)
+      if (first.primaryCategorySlug) {
+        const catRow = categories.find(c => c.slug === first.primaryCategorySlug);
+        if (catRow) {
+          const subRow = first.primarySubcategorySlug
+            ? subcategories.find(s => s.category_id === catRow.id && s.slug === first.primarySubcategorySlug)
+            : undefined;
+          const existingPlugin = allPlugins.find(p => p.id === pluginId);
+          const hasClassification = existingPlugin?.classifications.some(c => c.isPrimary);
+          if (!hasClassification) {
+            await supabase.from("plugin_classifications").insert({
+              plugin_id: pluginId,
+              category_id: catRow.id,
+              subcategory_id: subRow?.id ?? null,
+              is_primary: true,
+              source: 'scan',
+              confidence: first.metadataConfidence,
+              user_id: userId,
+            });
+          }
+        }
+      }
+
+      const now = new Date().toISOString();
       for (const d of group) {
         const { data: existingFmt } = await supabase
           .from("plugin_formats")
@@ -641,8 +1099,20 @@ export default function App() {
             file_name: d.fileName,
             file_size: d.fileSize,
             bundle_id: d.bundleId,
+            version: d.version,
+            architecture: d.architecture,
+            last_modified_at: d.lastModifiedAt,
+            scan_verified_at: now,
             user_id: userId,
           });
+        } else {
+          await supabase.from("plugin_formats").update({
+            file_size: d.fileSize,
+            version: d.version,
+            architecture: d.architecture,
+            last_modified_at: d.lastModifiedAt,
+            scan_verified_at: now,
+          }).eq("id", existingFmt.id);
         }
       }
     }
@@ -756,7 +1226,6 @@ export default function App() {
 
   const activePlugin = filteredPlugins.find(p => p.id === selectedPluginId) ??
     allPlugins.find(p => p.id === selectedPluginId);
-  const categoryOptions = uniqueCategories.map(cat => ({ value: cat, label: cat }));
 
   return (
     <div className="flex h-screen bg-[#F7F8FA] font-sans antialiased overflow-hidden">
@@ -828,28 +1297,91 @@ export default function App() {
         {/* Filters */}
         <div className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
           <div className="space-y-0.5">
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest pl-2 block mb-1.5">Discover</span>
+            <SidebarItem
+              label="Find By Problem"
+              icon={<Zap size={14} />}
+              active={metaView === "find-by-problem"}
+              onClick={() => { clearAllFilters(); setMetaView("find-by-problem"); setSelectedPluginId(null); }}
+            />
+          </div>
+
+          <div className="space-y-0.5">
             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest pl-2 block mb-1.5">Library</span>
             <SidebarItem label="All Plugins" icon={<Briefcase size={14} />}
-              active={!filterFavorites && !filterHidden && selectedCategory === "All" && !selectedTag}
+              active={!filterFavorites && !filterHidden && metaView === "none" && !selectedCategoryId && !selectedTag}
               count={counts.total}
-              onClick={() => { setFilterFavorites(false); setFilterHidden(false); setSelectedCategory("All"); setSelectedTag(null); }} />
+              onClick={() => clearAllFilters()} />
             <SidebarItem label="Favorites" icon={<Heart size={14} />}
-              active={filterFavorites && !filterHidden} count={counts.favorites}
-              onClick={() => { setFilterFavorites(true); setFilterHidden(false); setSelectedCategory("All"); setSelectedTag(null); }} />
+              active={filterFavorites && !filterHidden && metaView === "none"} count={counts.favorites}
+              onClick={() => { clearAllFilters(); setFilterFavorites(true); }} />
             <SidebarItem label="Hidden" icon={<EyeOff size={14} />}
-              active={filterHidden} count={counts.hidden}
-              onClick={() => { setFilterHidden(true); setFilterFavorites(false); setSelectedCategory("All"); setSelectedTag(null); }} />
+              active={filterHidden && metaView === "none"} count={counts.hidden}
+              onClick={() => { clearAllFilters(); setFilterHidden(true); }} />
           </div>
 
           <div className="space-y-0.5">
             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest pl-2 block mb-1.5">Categories</span>
-            {categoryOptions.map(opt => {
-              const active = selectedCategory === opt.value && !filterFavorites && !filterHidden && !selectedTag;
-              const qty = counts.categories[opt.value] || 0;
+            {allCategories.map(cat => {
+              const catCount = catPluginCounts.catCounts.get(cat.id) ?? 0;
+              const isExpanded = expandedSidebarCategories.has(cat.id);
+              const isCatActive = selectedCategoryId === cat.id && !selectedSubcategoryId && metaView === "none" && !filterFavorites && !filterHidden;
+              const catSubs = allSubcategories.filter(s => s.category_id === cat.id && (catPluginCounts.subcatCounts.get(s.id) ?? 0) > 0);
               return (
-                <SidebarItem key={opt.value} label={opt.label} icon={<Music size={13} />}
-                  active={active} count={qty}
-                  onClick={() => { setSelectedCategory(opt.value); setFilterFavorites(false); setFilterHidden(false); setSelectedTag(null); }} />
+                <div key={cat.id}>
+                  <button
+                    onClick={() => {
+                      clearAllFilters();
+                      setSelectedCategoryId(cat.id);
+                      setSelectedSubcategoryId(null);
+                      setExpandedSidebarCategories(prev => {
+                        const next = new Set(prev);
+                        if (next.has(cat.id) && selectedCategoryId === cat.id) next.delete(cat.id);
+                        else next.add(cat.id);
+                        return next;
+                      });
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-1.5 text-xs font-medium rounded-lg transition-colors text-left cursor-pointer ${
+                      isCatActive
+                        ? "bg-[#F3F4F6] text-[#0F5B59] font-semibold"
+                        : "text-[#6B7280] hover:bg-[#F9FAFB] hover:text-gray-900"
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2 truncate">
+                      <ChevronRight size={11} className={`shrink-0 transition-transform duration-150 ${isExpanded ? "rotate-90" : ""} ${isCatActive ? "text-[#0F5B59]" : "text-[#9CA3AF]"}`} />
+                      <span className="truncate">{cat.name}</span>
+                    </div>
+                    {catCount > 0 && (
+                      <span className={`flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${isCatActive ? "bg-[#E8F3F2] text-[#0F5B59]" : "bg-transparent text-[#9CA3AF]"}`}>
+                        {catCount}
+                      </span>
+                    )}
+                  </button>
+                  {isExpanded && catSubs.map(sub => {
+                    const subCount = catPluginCounts.subcatCounts.get(sub.id) ?? 0;
+                    const isSubActive = selectedCategoryId === cat.id && selectedSubcategoryId === sub.id && metaView === "none";
+                    return (
+                      <button
+                        key={sub.id}
+                        onClick={() => {
+                          clearAllFilters();
+                          setSelectedCategoryId(cat.id);
+                          setSelectedSubcategoryId(sub.id);
+                        }}
+                        className={`w-full flex items-center justify-between pl-7 pr-3 py-1 text-[11px] font-medium rounded-lg transition-colors text-left cursor-pointer ${
+                          isSubActive
+                            ? "bg-[#F3F4F6] text-[#0F5B59] font-semibold"
+                            : "text-[#9CA3AF] hover:bg-[#F9FAFB] hover:text-gray-700"
+                        }`}
+                      >
+                        <span className="truncate">{sub.name}</span>
+                        <span className={`flex-shrink-0 text-[10px] px-1 font-medium ${isSubActive ? "text-[#0F5B59]" : "text-[#C4C9D4]"}`}>
+                          {subCount}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               );
             })}
           </div>
@@ -859,10 +1391,68 @@ export default function App() {
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest pl-2 block mb-1.5">Tags</span>
               {tagCounts.map(t => (
                 <SidebarItem key={t.name} label={t.name} icon={<Tag size={13} />}
-                  active={selectedTag === t.name && !filterFavorites && !filterHidden}
+                  active={selectedTag === t.name && !filterFavorites && !filterHidden && metaView === "none"}
                   count={t.count}
-                  onClick={() => { setSelectedTag(t.name); setSelectedCategory("All"); setFilterFavorites(false); setFilterHidden(false); }} />
+                  onClick={() => { clearAllFilters(); setSelectedTag(t.name); }} />
               ))}
+            </div>
+          )}
+
+          <div className="space-y-0.5">
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest pl-2 block mb-1.5">Review</span>
+            {counts.needsReview > 0 && (
+              <SidebarItem label="Needs Review" icon={<AlertTriangle size={13} />}
+                active={metaView === "needs-review"}
+                count={counts.needsReview}
+                onClick={() => activateMetaView("needs-review")} />
+            )}
+            {counts.unknownVendor > 0 && (
+              <SidebarItem label="Unknown Vendor" icon={<Info size={13} />}
+                active={metaView === "unknown-vendor"}
+                count={counts.unknownVendor}
+                onClick={() => activateMetaView("unknown-vendor")} />
+            )}
+            {counts.containers > 0 && (
+              <SidebarItem label="Containers" icon={<Briefcase size={13} />}
+                active={metaView === "containers"}
+                count={counts.containers}
+                onClick={() => activateMetaView("containers")} />
+            )}
+          </div>
+
+          {counts.total > 0 && (
+            <div className="space-y-0.5">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest pl-2 block mb-1.5">Metadata</span>
+              {counts.missingDescription > 0 && (
+                <SidebarItem label="No Description" icon={<FileText size={13} />}
+                  active={metaView === "missing-description"}
+                  count={counts.missingDescription}
+                  onClick={() => activateMetaView("missing-description")} />
+              )}
+              {counts.missingManual > 0 && (
+                <SidebarItem label="No Manual Link" icon={<BookOpen size={13} />}
+                  active={metaView === "missing-manual"}
+                  count={counts.missingManual}
+                  onClick={() => activateMetaView("missing-manual")} />
+              )}
+              {counts.missingWebsite > 0 && (
+                <SidebarItem label="No Website" icon={<Globe size={13} />}
+                  active={metaView === "missing-website"}
+                  count={counts.missingWebsite}
+                  onClick={() => activateMetaView("missing-website")} />
+              )}
+              {counts.missingRating > 0 && (
+                <SidebarItem label="Not Rated" icon={<Star size={13} />}
+                  active={metaView === "missing-rating"}
+                  count={counts.missingRating}
+                  onClick={() => activateMetaView("missing-rating")} />
+              )}
+              {counts.missingUseCases > 0 && (
+                <SidebarItem label="No Use Cases" icon={<Zap size={13} />}
+                  active={metaView === "missing-use-cases"}
+                  count={counts.missingUseCases}
+                  onClick={() => activateMetaView("missing-use-cases")} />
+              )}
             </div>
           )}
         </div>
@@ -957,13 +1547,40 @@ export default function App() {
           </div>
         </header>
 
+        {/* Find By Problem view */}
+        {metaView === "find-by-problem" && (
+          <FindByProblem
+            allPlugins={allPlugins}
+            allUseCases={allUseCases}
+            allSoundSources={allSoundSources}
+            allProblems={allProblems}
+            allResults={allResults}
+            allStages={allStages}
+            onSelectPlugin={selectPlugin}
+            selectedPluginId={selectedPluginId}
+          />
+        )}
+
         {/* Plugin list */}
-        <div className="flex-1 overflow-y-auto p-6">
+        {metaView !== "find-by-problem" && <div className="flex-1 overflow-y-auto p-6">
           <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
             <div>
               <div className="flex items-center space-x-2">
                 <h2 className="text-xl font-bold text-gray-900 tracking-tight">
-                  {filterFavorites ? "Favorites" : filterHidden ? "Hidden Plugins" : `${selectedCategory} Plugins`}
+                  {metaView === 'containers' ? "Containers" :
+                   metaView === 'unknown-vendor' ? "Unknown Vendor" :
+                   metaView === 'needs-review' ? "Needs Review" :
+                   metaView === 'missing-description' ? "Missing Description" :
+                   metaView === 'missing-manual' ? "No Manual Link" :
+                   metaView === 'missing-website' ? "No Website" :
+                   metaView === 'missing-image' ? "No Image" :
+                   metaView === 'missing-rating' ? "Not Rated" :
+                   metaView === 'missing-use-cases' ? "No Use Cases" :
+                   filterFavorites ? "Favorites" :
+                   filterHidden ? "Hidden Plugins" :
+                   selectedSubcategoryId ? (allSubcategories.find(s => s.id === selectedSubcategoryId)?.name ?? "Plugins") :
+                   selectedCategoryId ? (allCategories.find(c => c.id === selectedCategoryId)?.name ?? "Plugins") :
+                   "All Plugins"}
                 </h2>
                 {selectedTag && <Badge variant="primary" className="ml-2 font-mono">tag: {selectedTag}</Badge>}
               </div>
@@ -971,6 +1588,35 @@ export default function App() {
                 <p className="text-xs text-gray-400 font-medium select-none">
                   {dataLoading ? "Loading..." : `${filteredPlugins.length} plugin${filteredPlugins.length === 1 ? "" : "s"} · ${vendorGroups.length} vendor${vendorGroups.length === 1 ? "" : "s"}`}
                 </p>
+                {/* Completion dashboard — shown only on all-plugins view */}
+                {metaView === "none" && !filterFavorites && !filterHidden && !selectedCategoryId && !selectedTag && counts.total > 0 && (
+                  <div className="flex items-center flex-wrap gap-1.5 mt-2">
+                    {[
+                      { label: "Descriptions", val: counts.withDescription, view: "missing-description" as const },
+                      { label: "Manuals", val: counts.withManual, view: "missing-manual" as const },
+                      { label: "Websites", val: counts.withWebsite, view: "missing-website" as const },
+                      { label: "Rated", val: counts.withRating, view: "missing-rating" as const },
+                      { label: "Use Cases", val: counts.withUseCases, view: "missing-use-cases" as const },
+                    ].map(stat => {
+                      const pct = Math.round((stat.val / counts.total) * 100);
+                      const complete = stat.val === counts.total;
+                      return (
+                        <button
+                          key={stat.label}
+                          onClick={() => !complete ? activateMetaView(stat.view) : undefined}
+                          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors ${
+                            complete
+                              ? "bg-teal-50 text-teal-700 border-teal-200 cursor-default"
+                              : "bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300 cursor-pointer hover:text-gray-700"
+                          }`}
+                          title={complete ? `All ${counts.total} plugins have ${stat.label.toLowerCase()}` : `${counts.total - stat.val} missing — click to review`}
+                        >
+                          {stat.val}/{counts.total} {stat.label} {pct < 100 && <span className="opacity-60">({pct}%)</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 {vendorGroups.length > 0 && (
                   <div className="flex items-center space-x-1 text-[10px] font-semibold">
                     <button onClick={expandAllVendors} className="text-[#0F5B59] hover:underline">Expand all</button>
@@ -1001,20 +1647,19 @@ export default function App() {
               <EmptyState
                 title="No Plugins Found"
                 description={
-                  search || selectedTag || selectedCategory !== "All"
+                  search || selectedTag || selectedCategoryId
                     ? "Adjust your filters to find plugins."
                     : "Run a Quick Scan to discover installed plugins on this machine."
                 }
                 action={
-                  !(search || selectedTag || selectedCategory !== "All") ? (
+                  !(search || selectedTag || selectedCategoryId) ? (
                     <Button onClick={() => handleTriggerScan("quick")} className="space-x-1.5">
                       <Plus size={14} />
                       <span>Run Quick Scan</span>
                     </Button>
                   ) : (
                     <Button variant="outline" onClick={() => {
-                      setSearch(""); setSelectedCategory("All"); setSelectedTag(null);
-                      setFilterFavorites(false); setFilterHidden(false);
+                      clearAllFilters(); setSearch("");
                     }}>
                       Reset Filters
                     </Button>
@@ -1087,8 +1732,19 @@ export default function App() {
                             return <Badge key={idx} variant={v} className="font-mono text-[9px] px-1.5 py-0">{fmt.format}</Badge>;
                           })}
                         </div>
-                        <div className="w-44 shrink-0 truncate text-xs text-gray-400 font-mono">
-                          {p.notes ? p.notes : p.tags.length > 0 ? p.tags.join(", ") : "—"}
+                        <div className="w-44 shrink-0 flex items-center gap-1.5 overflow-hidden">
+                          {p.personal_rating && (
+                            <div className="flex items-center shrink-0">
+                              {[1,2,3,4,5].map(n => (
+                                <Star key={n} size={9} className={n <= p.personal_rating! ? "text-amber-400" : "text-gray-200"} fill={n <= p.personal_rating! ? "#FBBF24" : "none"} />
+                              ))}
+                            </div>
+                          )}
+                          {pluginsWithUcsSet.has(p.id) && <Zap size={9} className="text-teal-500 shrink-0" />}
+                          {p.metadata_confidence === "manual" && <span className="text-[8px] font-bold text-teal-600 shrink-0 bg-teal-50 px-1 rounded">M</span>}
+                          <span className="text-xs text-gray-400 font-mono truncate">
+                            {p.notes || (p.tags.length > 0 ? p.tags.join(", ") : "")}
+                          </span>
                         </div>
                       </div>
                     ))}
@@ -1167,7 +1823,8 @@ export default function App() {
               })}
             </div>
           )}
-        </div>
+        </div>}
+
       </main>
 
       {/* RIGHT INSPECTOR — slides in from right */}
@@ -1181,131 +1838,53 @@ export default function App() {
         activePlugin ? "translate-x-0" : "translate-x-full"
       }`}>
         {activePlugin && (
-          <div className="flex flex-col h-full">
-            <div className="px-5 py-4 border-b border-gray-100 bg-[#F7F8FA]/30 flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <Music size={15} className="text-[#0F5B59]" />
-                <span className="text-base font-bold text-[#111827]">Details</span>
-              </div>
-              <div className="flex items-center space-x-1">
-                <Tooltip content={activePlugin.favorite ? "Remove favorite" : "Set as favorite"}>
-                  <IconButton size="sm" variant={activePlugin.favorite ? "active" : "ghost"}
-                    onClick={() => handleToggleFavorite(activePlugin.id)}>
-                    <Heart size={15} fill={activePlugin.favorite ? "#0F5B59" : "none"} />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip content={activePlugin.hidden ? "Restore plugin" : "Hide plugin"}>
-                  <IconButton size="sm" onClick={() => handleToggleHide(activePlugin.id)}>
-                    <EyeOff size={15} />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip content="Close">
-                  <IconButton size="sm" variant="ghost" onClick={() => setSelectedPluginId(null)}>
-                    <X size={15} />
-                  </IconButton>
-                </Tooltip>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-5 space-y-6">
-              <div className="text-left pb-4 border-b border-gray-100">
-                <input
-                  type="text"
-                  value={inspectEditName}
-                  onChange={e => { setInspectEditName(e.target.value); setHasEditChanges(true); }}
-                  className="w-full font-bold text-lg text-gray-900 focus:bg-gray-50 px-1 py-0.5 rounded outline-none border border-transparent focus:border-gray-200"
-                />
-                <input
-                  type="text"
-                  value={inspectEditVendor}
-                  onChange={e => { setInspectEditVendor(e.target.value); setHasEditChanges(true); }}
-                  className="w-full text-xs text-gray-400 focus:bg-gray-50 px-1 py-0.5 rounded outline-none border border-transparent focus:border-gray-200 mt-1"
-                />
-              </div>
-
-              <div className="space-y-4 text-left">
-                <div>
-                  <Select
-                    label="Category"
-                    options={categoryOptions}
-                    value={inspectEditCategory}
-                    onChange={e => { setInspectEditCategory(e.target.value); setHasEditChanges(true); }}
-                  />
-                  <p className="text-[10px] text-gray-400 mt-1 select-none font-medium">
-                    Auto-detected; override as needed.
-                  </p>
-                </div>
-
-                <div>
-                  <Input
-                    label="Tags"
-                    placeholder="analog, warm, cpu-heavy"
-                    value={inspectEditTagsStr}
-                    onChange={e => { setInspectEditTagsStr(e.target.value); setHasEditChanges(true); }}
-                  />
-                  <p className="text-[10px] text-gray-400 mt-1 select-none font-medium">
-                    Separate with commas.
-                  </p>
-                </div>
-
-                <div>
-                  <Textarea
-                    label="Notes"
-                    placeholder="Presets, settings, rating..."
-                    value={inspectEditNotes}
-                    onChange={e => { setInspectEditNotes(e.target.value); setHasEditChanges(true); }}
-                  />
-                </div>
-
-                {hasEditChanges && (
-                  <Button onClick={handleSaveInspectEdits} className="w-full text-xs py-2 shadow-xs bg-[#0F5B59] hover:bg-teal-800 tracking-wide font-bold uppercase transition-all">
-                    Save Changes
-                  </Button>
-                )}
-              </div>
-
-              {/* Formats */}
-              <div className="space-y-3.5 pt-4 text-left border-t border-gray-100">
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                  Installed Formats ({activePlugin.formats.length})
-                </span>
-                <div className="space-y-3 bg-[#F7F8FA] p-3 rounded-lg border border-gray-100">
-                  {activePlugin.formats.map((fmt, idx) => (
-                    <div key={idx} className="space-y-1.5 pb-2.5 last:pb-0 border-b border-gray-200/50 last:border-0">
-                      <div className="flex items-center justify-between">
-                        <Badge variant={fmt.format === "AAX" ? "warning" : "primary"}>{fmt.format}</Badge>
-                        <span className="text-[10px] font-mono text-gray-500 font-semibold">{fmt.file_name ?? ""}</span>
-                      </div>
-                      <div className="text-[10px] text-gray-500 font-mono break-all leading-tight">
-                        <div className="text-gray-400 uppercase text-[9px] font-bold tracking-wider mb-0.5">Location</div>
-                        {fmt.file_path}
-                      </div>
-                      {fmt.format === "AAX" && (
-                        <span className="text-[9px] font-bold text-amber-500 flex items-center space-x-1 select-none">
-                          <AlertTriangle size={10} />
-                          <span>AAX — requires Pro Tools</span>
-                        </span>
-                      )}
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="text-[9px] py-1 px-1.5 h-auto text-gray-500 hover:text-[#0F5B59] bg-white cursor-pointer hover:bg-gray-150"
-                        onClick={() => handleOpenFolder(fmt.file_path)}
-                      >
-                        <FolderOpen size={10} className="mr-1 inline" /> Open in Finder
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 border-t border-gray-100 bg-[#F7F8FA]/30 text-center select-none text-[10px] text-gray-400 font-mono">
-              Added: {new Date(activePlugin.created_at).toLocaleDateString()}
-            </div>
-          </div>
+          <PluginInspector
+            plugin={activePlugin}
+            allCategories={allCategories}
+            allSubcategories={allSubcategories}
+            allSoundSources={allSoundSources}
+            allProblems={allProblems}
+            allResults={allResults}
+            allStages={allStages}
+            pluginUseCases={allUseCases.filter(uc => uc.plugin_id === activePlugin.id)}
+            editName={inspectEditName} setEditName={setInspectEditName}
+            editVendor={inspectEditVendor} setEditVendor={setInspectEditVendor}
+            editCategoryId={inspectEditCategoryId} setEditCategoryId={setInspectEditCategoryId}
+            editSubcategoryId={inspectEditSubcategoryId} setEditSubcategoryId={setInspectEditSubcategoryId}
+            editTagsStr={inspectEditTagsStr} setEditTagsStr={setInspectEditTagsStr}
+            editNotes={inspectEditNotes} setEditNotes={setInspectEditNotes}
+            editRating={inspectEditRating} setEditRating={setInspectEditRating}
+            editFavoriteUseCase={inspectEditFavoriteUseCase} setEditFavoriteUseCase={setInspectEditFavoriteUseCase}
+            editComplexity={inspectEditComplexity} setEditComplexity={setInspectEditComplexity}
+            editCharacterNotes={inspectEditCharacterNotes} setEditCharacterNotes={setInspectEditCharacterNotes}
+            editRoutingNotes={inspectEditRoutingNotes} setEditRoutingNotes={setInspectEditRoutingNotes}
+            editTutorialUrl={inspectEditTutorialUrl} setEditTutorialUrl={setInspectEditTutorialUrl}
+            editDescription={inspectEditDescription} setEditDescription={setInspectEditDescription}
+            editWebsiteUrl={inspectEditWebsiteUrl} setEditWebsiteUrl={setInspectEditWebsiteUrl}
+            editManualUrl={inspectEditManualUrl} setEditManualUrl={setInspectEditManualUrl}
+            editImageUrl={inspectEditImageUrl} setEditImageUrl={setInspectEditImageUrl}
+            hasEditChanges={hasEditChanges} setHasEditChanges={setHasEditChanges}
+            showAddUseCase={showAddUseCase} setShowAddUseCase={setShowAddUseCase}
+            addUcSourceId={addUcSourceId} setAddUcSourceId={setAddUcSourceId}
+            addUcProblemId={addUcProblemId} setAddUcProblemId={setAddUcProblemId}
+            addUcResultId={addUcResultId} setAddUcResultId={setAddUcResultId}
+            addUcStageId={addUcStageId} setAddUcStageId={setAddUcStageId}
+            addUcRating={addUcRating} setAddUcRating={setAddUcRating}
+            addUcNotes={addUcNotes} setAddUcNotes={setAddUcNotes}
+            addUcRecommended={addUcRecommended} setAddUcRecommended={setAddUcRecommended}
+            onClose={() => setSelectedPluginId(null)}
+            onToggleFavorite={() => handleToggleFavorite(activePlugin.id)}
+            onToggleHide={() => handleToggleHide(activePlugin.id)}
+            onSave={handleSaveInspectEdits}
+            onSaveUseCase={handleSaveUseCase}
+            onCancelUseCase={handleCancelUseCase}
+            onDeleteUseCase={handleDeleteUseCase}
+            onUpdateUseCaseRating={handleUpdateUseCaseRating}
+            onOpenFolder={handleOpenFolder}
+          />
         )}
       </aside>
+
 
       {/* SETTINGS MODAL */}
       <Modal

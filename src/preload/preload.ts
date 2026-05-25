@@ -19,6 +19,9 @@ const api: VSTVaultAPI = {
 
   getAppVersion: () =>
     ipcRenderer.invoke("app:get-version"),
+
+  openExternalUrl: (url) =>
+    ipcRenderer.invoke("shell:open-url", url),
 };
 
 contextBridge.exposeInMainWorld("vstVault", api);

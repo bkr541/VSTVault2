@@ -4,10 +4,10 @@ export function generateCsv(plugins: ConsolidatedPlugin[]): string {
   const header = "Name,Vendor,Category,Formats,Paths,Favorite,Hidden,Tags,Notes\n";
   const rows = plugins.map(p => {
     const formats = p.formats.map(f => f.format).join("; ");
-    const paths = p.formats.map(f => f.path).join("; ");
+    const paths = p.formats.map(f => f.file_path).join("; ");
     const tags = p.tags.join("; ");
     const notes = (p.notes ?? "").replace(/"/g, '""').replace(/\n/g, " ");
-    return `"${p.name}","${p.vendor}","${p.category}","${formats}","${paths}","${p.is_favorite ? "YES" : "NO"}","${p.is_hidden ? "YES" : "NO"}","${tags}","${notes}"`;
+    return `"${p.name}","${p.vendor}","${p.category}","${formats}","${paths}","${p.favorite ? "YES" : "NO"}","${p.hidden ? "YES" : "NO"}","${tags}","${notes}"`;
   });
   return header + rows.join("\n");
 }
@@ -25,7 +25,7 @@ export function generateMarkdown(plugins: ConsolidatedPlugin[]): string {
 
   for (const p of plugins) {
     const formats = p.formats.map(f => f.format).join(", ");
-    const fav = p.is_favorite ? "♥" : "";
+    const fav = p.favorite ? "♥" : "";
     const notes = (p.notes ?? "").replace(/\|/g, "\\|");
     md += `| **${p.name}** | ${p.vendor} | ${p.category} | ${formats} | ${fav} | ${notes} |\n`;
   }

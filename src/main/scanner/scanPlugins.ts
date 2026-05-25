@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { PluginFormatType, DiscoveredPlugin, ScanRunResult } from "../../types";
-import { readInfoPlist, guessVendorFromPath, guessCategory, normalizeName } from "./pluginMetadata";
+import { readInfoPlist, resolveVendorMetadata, normalizeName } from "./pluginMetadata";
 
 const PLUGIN_EXTENSIONS: Record<string, PluginFormatType> = {
   ".vst": "VST2",
@@ -87,7 +87,7 @@ function processPlugin(
 
   const baseName = path.basename(fileName, ext);
   let name = baseName;
-  let vendor = "Unknown Vendor";
+  let plistVendor: string | null = null;
   let version: string | null = null;
   let architecture: string | null = null;
   let bundleId: string | null = null;
@@ -100,7 +100,7 @@ function processPlugin(
     if (plist.bundleName) name = plist.bundleName;
     else if (plist.bundleDisplayName) name = plist.bundleDisplayName;
 
-    if (plist.manufacturer) vendor = plist.manufacturer;
+    if (plist.manufacturer) plistVendor = plist.manufacturer;
     if (plist.shortVersionString) version = plist.shortVersionString;
     else if (plist.bundleVersion) version = plist.bundleVersion;
 
@@ -110,10 +110,8 @@ function processPlugin(
     Object.assign(metadata, plist);
   }
 
-  // Fall back to path-based vendor guessing
-  if (vendor === "Unknown Vendor") {
-    vendor = guessVendorFromPath(fullPath);
-  }
+  // Resolve vendor, category, confidence using layered matching
+  const resolved = resolveVendorMetadata(name, plistVendor, fullPath);
 
   // Architecture defaults
   if (!architecture) {
@@ -123,8 +121,8 @@ function processPlugin(
   discovered.push({
     name,
     normalizedName: normalizeName(name),
-    vendor,
-    category: guessCategory(name),
+    vendor: resolved.vendor,
+    category: resolved.category,
     version,
     architecture,
     format,
@@ -134,6 +132,11 @@ function processPlugin(
     fileSize: stat.isDirectory() ? 0 : stat.size,
     lastModifiedAt: stat.mtime.toISOString(),
     metadata,
+    isContainerShell: resolved.isContainerShell,
+    metadataConfidence: resolved.confidence,
+    productFamily: resolved.productFamily,
+    primaryCategorySlug: resolved.primaryCategorySlug ?? null,
+    primarySubcategorySlug: resolved.primarySubcategorySlug ?? null,
   });
 }
 

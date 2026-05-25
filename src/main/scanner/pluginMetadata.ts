@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { matchProduct, type MetadataConfidence } from "./productMappings";
 
 export interface PlistMetadata {
   bundleName?: string;
@@ -102,4 +103,71 @@ export function normalizeName(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "")
     .trim();
+}
+
+export type ScanConfidence = 'verified' | 'inferred' | 'unknown';
+
+export interface ResolvedMetadata {
+  vendor: string;
+  category: string;
+  productFamily: string | null;
+  confidence: ScanConfidence;
+  isContainerShell: boolean;
+  primaryCategorySlug: string | null;
+  primarySubcategorySlug: string | null;
+}
+
+/**
+ * Resolve vendor + category for a discovered plugin, using three layers in priority order:
+ *   1. Product name mapping (verified — exact/anchored product patterns)
+ *   2. plist manufacturer field (inferred — device reports its own vendor)
+ *   3. Filesystem path heuristics (inferred — fragile, last resort)
+ *
+ * The caller passes the best name available (plist name if present, else filename).
+ * plistVendor is the raw manufacturer string from Info.plist, or null if absent.
+ * fallbackPath is the full file path used for the path-based heuristic fallback.
+ */
+export function resolveVendorMetadata(
+  name: string,
+  plistVendor: string | null,
+  fallbackPath: string,
+): ResolvedMetadata {
+  // Layer 1: product name mapping
+  const product = matchProduct(name);
+  if (product) {
+    return {
+      vendor: product.vendor,
+      category: product.category ?? guessCategory(name),
+      productFamily: product.productFamily ?? null,
+      confidence: product.confidence as ScanConfidence,
+      isContainerShell: product.isContainerShell ?? false,
+      primaryCategorySlug: product.primaryCategorySlug ?? null,
+      primarySubcategorySlug: product.primarySubcategorySlug ?? null,
+    };
+  }
+
+  // Layer 2: plist manufacturer
+  if (plistVendor && plistVendor !== "Unknown Vendor") {
+    return {
+      vendor: plistVendor,
+      category: guessCategory(name),
+      productFamily: null,
+      confidence: 'inferred',
+      isContainerShell: false,
+      primaryCategorySlug: null,
+      primarySubcategorySlug: null,
+    };
+  }
+
+  // Layer 3: path-based heuristic
+  const pathVendor = guessVendorFromPath(fallbackPath);
+  return {
+    vendor: pathVendor,
+    category: guessCategory(name),
+    productFamily: null,
+    confidence: pathVendor !== "Unknown Vendor" ? 'inferred' : 'unknown',
+    isContainerShell: false,
+    primaryCategorySlug: null,
+    primarySubcategorySlug: null,
+  };
 }
