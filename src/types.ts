@@ -73,7 +73,8 @@ export interface NoteEntry {
 // Table: scan_history
 export interface ScanHistoryEntry {
   id: string;
-  scan_date: string;
+  started_at: string;
+  completed_at: string | null;
   scan_mode: "Quick Scan" | "Full Rescan" | "Custom Scan";
   folders_scanned: number;
   plugins_discovered: number;

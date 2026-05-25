@@ -309,7 +309,7 @@ export default function App() {
     const { data } = await supabase
       .from("scan_history")
       .select("*")
-      .order("scan_date", { ascending: false })
+      .order("started_at", { ascending: false })
       .limit(1);
     if (data && data.length > 0) setLastScan(data[0] as ScanHistoryEntry);
   };
@@ -492,7 +492,7 @@ export default function App() {
 
   const handleTriggerScan = async (mode: "quick" | "full" | "custom") => {
     if (!user) { showToast("Sign in to sync scan results.", "error"); return; }
-    if (!window.vstVault) { showToast("Electron IPC not available.", "error"); return; }
+    if (!window.vstVault) { showToast("Scan requires the Electron app — run `npm run dev` instead of launch.command.", "error"); return; }
 
     const enabledFolders = scanFolders.filter(f => f.is_enabled !== false).map(f => f.path);
     if (enabledFolders.length === 0) {
@@ -508,7 +508,7 @@ export default function App() {
     const { data: historyRow } = await supabase
       .from("scan_history")
       .insert({
-        scan_date: new Date().toISOString(),
+        started_at: new Date().toISOString(),
         scan_mode: modeLabel,
         folders_scanned: enabledFolders.length,
         plugins_discovered: 0,
@@ -855,7 +855,7 @@ export default function App() {
             <div className="text-[11px] font-semibold uppercase tracking-wider text-[#9CA3AF]">Last Scan</div>
             <div className="mt-1 text-xs font-semibold text-gray-700">
               {lastScan
-                ? new Date(lastScan.scan_date).toLocaleString([], { hour: "2-digit", minute: "2-digit", hour12: true })
+                ? new Date(lastScan.started_at).toLocaleString([], { hour: "2-digit", minute: "2-digit", hour12: true })
                 : "Never"}
             </div>
             <div className="mt-3 h-1.5 w-full rounded-full bg-[#E5E7EB]">
