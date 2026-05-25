@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from "electron";
+import { app, BrowserWindow, shell, session } from "electron";
 import path from "path";
 import { registerIpcHandlers } from "./ipc";
 
@@ -44,6 +44,24 @@ function createWindow() {
 
 app.whenReady().then(() => {
   registerIpcHandlers();
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const supabaseHost = "https://prolvsnndcjpfgxtyfem.supabase.co";
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        "Content-Security-Policy": [
+          `default-src 'self'; ` +
+          `script-src 'self' 'unsafe-inline'; ` +
+          `style-src 'self' 'unsafe-inline'; ` +
+          `connect-src 'self' ${supabaseHost} wss://prolvsnndcjpfgxtyfem.supabase.co; ` +
+          `img-src 'self' data:; ` +
+          `font-src 'self' data:`,
+        ],
+      },
+    });
+  });
+
   createWindow();
 
   app.on("activate", () => {

@@ -22,6 +22,8 @@ import {
   Info,
   LogOut,
   Loader2,
+  ChevronRight,
+  X,
 } from "lucide-react";
 
 import { supabase } from "./renderer/lib/supabaseClient";
@@ -187,6 +189,7 @@ export default function App() {
   const [filterHidden, setFilterHidden] = useState(false);
   const [sortBy, setSortBy] = useState("name-asc");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  const [expandedVendors, setExpandedVendors] = useState<Set<string>>(new Set());
 
   // Inspector
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
@@ -252,6 +255,8 @@ export default function App() {
       supabase.from("notes").select("*"),
     ]);
 
+    if (pluginsRes.error) console.error("loadPlugins error:", pluginsRes.error);
+
     const plugins = pluginsRes.data ?? [];
     const formats = formatsRes.data ?? [];
     const pluginTags = pluginTagsRes.data ?? [];
@@ -263,24 +268,24 @@ export default function App() {
         .filter(f => f.plugin_id === p.id)
         .map(f => ({
           format: f.format,
-          path: f.path,
-          version: f.version,
-          architecture: f.architecture,
-          is_loadable_outside: f.is_loadable_outside,
-          last_scanned: f.last_scanned,
+          file_path: f.file_path,
+          file_name: f.file_name ?? null,
+          file_size: f.file_size ?? null,
+          bundle_id: f.bundle_id ?? null,
         }));
 
       const tagIds = pluginTags.filter(pt => pt.plugin_id === p.id).map(pt => pt.tag_id);
       const pTags = tags.filter(t => tagIds.includes(t.id)).map(t => t.name);
-      const pNote = notes.find(n => n.plugin_id === p.id)?.content ?? null;
+      const pNote = notes.find(n => n.plugin_id === p.id)?.body ?? null;
 
       return {
         id: p.id,
         name: p.name,
+        normalized_name: p.normalized_name ?? "",
         vendor: p.vendor,
         category: p.category as PluginCategory,
-        is_favorite: p.is_favorite,
-        is_hidden: p.is_hidden,
+        favorite: p.favorite ?? false,
+        hidden: p.hidden ?? false,
         created_at: p.created_at,
         updated_at: p.updated_at,
         formats: pFormats,
@@ -293,31 +298,31 @@ export default function App() {
   };
 
   const loadScanFolders = async () => {
-    const { data } = await supabase.from("scan_folders").select("*").order("created_at");
+    const { data, error } = await supabase.from("scan_folders").select("*").order("created_at");
+    if (error) console.error("loadScanFolders error:", error);
     setScanFolders(
       (data ?? []).map(f => ({
         id: f.id,
-        path: f.path,
-
-        is_enabled: f.is_enabled ?? true,
+        folder_path: f.folder_path,
         created_at: f.created_at,
       }))
     );
   };
 
   const loadScanHistory = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("scan_history")
       .select("*")
       .order("started_at", { ascending: false })
       .limit(1);
+    if (error) console.error("loadScanHistory error:", error);
     if (data && data.length > 0) setLastScan(data[0] as ScanHistoryEntry);
   };
 
   // ── Derived state ─────────────────────────────────────────────────────────
 
   const { counts, tagCounts, filteredPlugins } = useMemo(() => {
-    const visible = allPlugins.filter(p => !p.is_hidden);
+    const visible = allPlugins.filter(p => !p.hidden);
 
     const categories = Object.values(PluginCategory).reduce((acc, cat) => {
       acc[cat] = visible.filter(p => p.category === cat).length;
@@ -334,16 +339,16 @@ export default function App() {
 
     const counts = {
       total: visible.length,
-      favorites: visible.filter(p => p.is_favorite).length,
-      hidden: allPlugins.filter(p => p.is_hidden).length,
+      favorites: visible.filter(p => p.favorite).length,
+      hidden: allPlugins.filter(p => p.hidden).length,
       categories,
     };
 
     let result = filterHidden
-      ? allPlugins.filter(p => p.is_hidden)
-      : allPlugins.filter(p => !p.is_hidden);
+      ? allPlugins.filter(p => p.hidden)
+      : allPlugins.filter(p => !p.hidden);
 
-    if (filterFavorites) result = result.filter(p => p.is_favorite);
+    if (filterFavorites) result = result.filter(p => p.favorite);
     if (selectedCategory !== "All") result = result.filter(p => p.category === selectedCategory);
     if (selectedTag) result = result.filter(p => p.tags.includes(selectedTag));
     if (search) {
@@ -368,7 +373,33 @@ export default function App() {
     return { counts, tagCounts, filteredPlugins: result };
   }, [allPlugins, filterHidden, filterFavorites, selectedCategory, selectedTag, search, sortBy]);
 
+  const vendorGroups = useMemo(() => {
+    const groups = new Map<string, ConsolidatedPlugin[]>();
+    for (const p of filteredPlugins) {
+      const list = groups.get(p.vendor) ?? [];
+      list.push(p);
+      groups.set(p.vendor, list);
+    }
+    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [filteredPlugins]);
+
   // ── Toast ────────────────────────────────────────────────────────────────────
+
+  const toggleVendor = useCallback((vendor: string) => {
+    setExpandedVendors(prev => {
+      const next = new Set(prev);
+      if (next.has(vendor)) next.delete(vendor); else next.add(vendor);
+      return next;
+    });
+  }, []);
+
+  const expandAllVendors = useCallback(() => {
+    setExpandedVendors(new Set(vendorGroups.map(([v]) => v)));
+  }, [vendorGroups]);
+
+  const collapseAllVendors = useCallback(() => {
+    setExpandedVendors(new Set());
+  }, []);
 
   const showToast = useCallback((msg: string, type: "success" | "error" | "info" = "success") => {
     setToastMessage(msg);
@@ -391,26 +422,26 @@ export default function App() {
   const handleToggleFavorite = async (pId: string) => {
     const plugin = allPlugins.find(p => p.id === pId);
     if (!plugin) return;
-    const newVal = !plugin.is_favorite;
+    const newVal = !plugin.favorite;
     const { error } = await supabase
       .from("plugins")
-      .update({ is_favorite: newVal, updated_at: new Date().toISOString() })
+      .update({ favorite: newVal, updated_at: new Date().toISOString() })
       .eq("id", pId);
     if (error) { showToast("Failed to update favorite.", "error"); return; }
-    setAllPlugins(prev => prev.map(p => p.id === pId ? { ...p, is_favorite: newVal } : p));
+    setAllPlugins(prev => prev.map(p => p.id === pId ? { ...p, favorite: newVal } : p));
     showToast(newVal ? "Added to favorites" : "Removed from favorites");
   };
 
   const handleToggleHide = async (pId: string) => {
     const plugin = allPlugins.find(p => p.id === pId);
     if (!plugin) return;
-    const newVal = !plugin.is_hidden;
+    const newVal = !plugin.hidden;
     const { error } = await supabase
       .from("plugins")
-      .update({ is_hidden: newVal, updated_at: new Date().toISOString() })
+      .update({ hidden: newVal, updated_at: new Date().toISOString() })
       .eq("id", pId);
     if (error) { showToast("Failed to update visibility.", "error"); return; }
-    setAllPlugins(prev => prev.map(p => p.id === pId ? { ...p, is_hidden: newVal } : p));
+    setAllPlugins(prev => prev.map(p => p.id === pId ? { ...p, hidden: newVal } : p));
     if (selectedPluginId === pId) setSelectedPluginId(null);
     showToast(newVal ? "Plugin hidden" : "Plugin restored");
   };
@@ -444,13 +475,13 @@ export default function App() {
     if (inspectEditNotes.trim()) {
       if (existingNote) {
         await supabase.from("notes").update({
-          content: inspectEditNotes,
+          body: inspectEditNotes,
           updated_at: new Date().toISOString(),
         }).eq("id", existingNote.id);
       } else {
         await supabase.from("notes").insert({
           plugin_id: selectedPluginId,
-          content: inspectEditNotes,
+          body: inspectEditNotes,
           user_id: user.id,
         });
       }
@@ -494,7 +525,7 @@ export default function App() {
     if (!user) { showToast("Sign in to sync scan results.", "error"); return; }
     if (!window.vstVault) { showToast("Scan requires the Electron app — run `npm run dev` instead of launch.command.", "error"); return; }
 
-    const enabledFolders = scanFolders.filter(f => f.is_enabled !== false).map(f => f.path);
+    const enabledFolders = scanFolders.map(f => f.folder_path);
     if (enabledFolders.length === 0) {
       showToast("No scan folders configured. Add folders in Settings.", "info");
       return;
@@ -511,8 +542,7 @@ export default function App() {
         started_at: new Date().toISOString(),
         scan_mode: modeLabel,
         folders_scanned: enabledFolders.length,
-        plugins_discovered: 0,
-        plugins_added: 0,
+        plugins_found: 0,
         user_id: user.id,
       })
       .select("id")
@@ -522,22 +552,19 @@ export default function App() {
       const result = await window.vstVault.scanPlugins({ folders: enabledFolders, mode });
       const added = await processScanResults(result, user.id);
 
-      // Update scan history
       if (historyRow) {
         await supabase.from("scan_history").update({
-          plugins_discovered: result.discovered.length,
-          plugins_added: added,
-          errors_logged: result.warnings.length > 0 ? JSON.stringify(result.warnings) : null,
+          completed_at: new Date().toISOString(),
+          plugins_found: result.discovered.length,
         }).eq("id", historyRow.id);
 
-        // Log scan errors
         for (const warning of result.warnings) {
           await supabase.from("scan_errors").insert({
             scan_history_id: historyRow.id,
             folder_path: "",
             error_message: warning,
             user_id: user.id,
-          }).maybeSingle();
+          });
         }
       }
 
@@ -546,11 +573,6 @@ export default function App() {
       await Promise.all([loadPlugins(), loadScanHistory()]);
     } catch (err: any) {
       showToast("Scan failed: " + String(err.message ?? err), "error");
-      if (historyRow) {
-        await supabase.from("scan_history").update({
-          errors_logged: JSON.stringify([String(err)]),
-        }).eq("id", historyRow.id);
-      }
     } finally {
       setIsScanning(false);
     }
@@ -570,9 +592,8 @@ export default function App() {
     for (const [, group] of groups) {
       const first = group[0];
 
-      // Check if plugin already exists (match by name, case-insensitive)
       const existing = allPlugins.find(
-        p => p.name.toLowerCase() === first.name.toLowerCase()
+        p => p.normalized_name === first.normalizedName || p.name.toLowerCase() === first.name.toLowerCase()
       );
 
       let pluginId: string;
@@ -582,10 +603,11 @@ export default function App() {
           .from("plugins")
           .insert({
             name: first.name,
+            normalized_name: first.normalizedName,
             vendor: first.vendor,
             category: first.category,
-            is_favorite: false,
-            is_hidden: false,
+            favorite: false,
+            hidden: false,
             user_id: userId,
           })
           .select("id")
@@ -602,29 +624,22 @@ export default function App() {
       }
 
       for (const d of group) {
-        // Check if this format+path already exists
         const { data: existingFmt } = await supabase
           .from("plugin_formats")
           .select("id")
           .eq("plugin_id", pluginId)
           .eq("format", d.format)
-          .eq("path", d.filePath)
+          .eq("file_path", d.filePath)
           .maybeSingle();
 
-        if (existingFmt) {
-          await supabase.from("plugin_formats").update({
-            version: d.version,
-            last_scanned: new Date().toISOString(),
-          }).eq("id", existingFmt.id);
-        } else {
+        if (!existingFmt) {
           await supabase.from("plugin_formats").insert({
             plugin_id: pluginId,
             format: d.format,
-            path: d.filePath,
-            version: d.version,
-            architecture: d.architecture,
-            is_loadable_outside: d.format !== "AAX",
-            last_scanned: new Date().toISOString(),
+            file_path: d.filePath,
+            file_name: d.fileName,
+            file_size: d.fileSize,
+            bundle_id: d.bundleId,
             user_id: userId,
           });
         }
@@ -641,12 +656,12 @@ export default function App() {
     const chosen = await window.vstVault.chooseScanFolder();
     if (!chosen || !user) return;
 
-    const already = scanFolders.find(f => f.path === chosen);
+    const already = scanFolders.find(f => f.folder_path === chosen);
     if (already) { showToast("Folder already in list.", "info"); return; }
 
     const { data, error } = await supabase
       .from("scan_folders")
-      .insert({ path: chosen, is_enabled: true, user_id: user.id })
+      .insert({ folder_path: chosen, user_id: user.id })
       .select()
       .single();
 
@@ -656,8 +671,7 @@ export default function App() {
       return;
     }
     setScanFolders(prev => [...prev, {
-      id: data.id, path: data.path,
-      is_enabled: data.is_enabled ?? true, created_at: data.created_at,
+      id: data.id, folder_path: data.folder_path, created_at: data.created_at,
     }]);
     showToast("Folder added to scan list.");
   };
@@ -674,17 +688,16 @@ export default function App() {
     const defaults = await window.vstVault.getDefaultScanFolders();
     let added = 0;
     for (const p of defaults) {
-      const already = scanFolders.find(f => f.path === p);
+      const already = scanFolders.find(f => f.folder_path === p);
       if (already) continue;
       const { data } = await supabase
         .from("scan_folders")
-        .insert({ path: p, is_enabled: true, user_id: user.id })
+        .insert({ folder_path: p, user_id: user.id })
         .select()
         .single();
       if (data) {
         setScanFolders(prev => [...prev, {
-          id: data.id, path: data.path,
-          is_enabled: data.is_enabled ?? true, created_at: data.created_at,
+          id: data.id, folder_path: data.folder_path, created_at: data.created_at,
         }]);
         added++;
       }
@@ -953,9 +966,18 @@ export default function App() {
                 </h2>
                 {selectedTag && <Badge variant="primary" className="ml-2 font-mono">tag: {selectedTag}</Badge>}
               </div>
-              <p className="text-xs text-gray-400 mt-1 font-medium select-none">
-                {dataLoading ? "Loading..." : `${filteredPlugins.length} plugin${filteredPlugins.length === 1 ? "" : "s"}`}
-              </p>
+              <div className="flex items-center space-x-3 mt-1">
+                <p className="text-xs text-gray-400 font-medium select-none">
+                  {dataLoading ? "Loading..." : `${filteredPlugins.length} plugin${filteredPlugins.length === 1 ? "" : "s"} · ${vendorGroups.length} vendor${vendorGroups.length === 1 ? "" : "s"}`}
+                </p>
+                {vendorGroups.length > 0 && (
+                  <div className="flex items-center space-x-1 text-[10px] font-semibold">
+                    <button onClick={expandAllVendors} className="text-[#0F5B59] hover:underline">Expand all</button>
+                    <span className="text-gray-300">·</span>
+                    <button onClick={collapseAllVendors} className="text-gray-400 hover:text-gray-600 hover:underline">Collapse all</button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center mt-3 md:mt-0 space-x-3 text-xs">
@@ -1001,113 +1023,145 @@ export default function App() {
             </div>
           ) : viewMode === "list" ? (
             <div className="bg-white rounded-lg border border-gray-200/60 shadow-sm overflow-hidden">
-              <Table
-                columns={[
-                  {
-                    header: "",
-                    accessor: (p: ConsolidatedPlugin) => (
-                      <button
-                        onClick={e => { e.stopPropagation(); handleToggleFavorite(p.id); }}
-                        className={`transition-colors p-1 rounded hover:bg-gray-50 cursor-pointer ${p.is_favorite ? "text-red-500" : "text-gray-300 hover:text-gray-400"}`}
+              {/* Column headers */}
+              <div className="flex items-center px-4 py-2 bg-gray-50 border-b border-gray-100 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
+                <div className="w-7 shrink-0" />
+                <div className="flex-1 min-w-0">Plugin Name</div>
+                <div className="w-36 shrink-0">Category</div>
+                <div className="w-32 shrink-0">Formats</div>
+                <div className="w-44 shrink-0">Notes / Tags</div>
+              </div>
+
+              {vendorGroups.map(([vendor, plugins]) => {
+                const isExpanded = expandedVendors.has(vendor);
+                return (
+                  <div key={vendor} className="border-b border-gray-100 last:border-0">
+                    {/* Vendor group header */}
+                    <button
+                      onClick={() => toggleVendor(vendor)}
+                      className="w-full flex items-center px-4 py-2.5 bg-gray-50/60 hover:bg-gray-100/60 transition-colors text-left select-none border-b border-gray-100"
+                    >
+                      <ChevronRight
+                        size={13}
+                        className={`text-gray-400 mr-2.5 shrink-0 transition-transform duration-150 ${isExpanded ? "rotate-90" : ""}`}
+                      />
+                      <span className="text-xs font-bold text-gray-700 flex-1 tracking-tight">{vendor}</span>
+                      <span className="text-[10px] text-gray-400 font-semibold bg-gray-100 px-2 py-0.5 rounded-full">
+                        {plugins.length} {plugins.length === 1 ? "plugin" : "plugins"}
+                      </span>
+                    </button>
+
+                    {/* Plugin rows */}
+                    {isExpanded && plugins.map(p => (
+                      <div
+                        key={p.id}
+                        onClick={() => selectPlugin(p)}
+                        className={`flex items-center px-4 py-2.5 cursor-pointer transition-colors border-b border-gray-50/80 last:border-0 ${
+                          selectedPluginId === p.id
+                            ? "bg-teal-50/50 border-l-2 border-l-[#0F5B59]"
+                            : "hover:bg-gray-50/60"
+                        }`}
                       >
-                        <Heart size={14} fill={p.is_favorite ? "#EF4444" : "none"} />
-                      </button>
-                    ),
-                    className: "w-10 text-center",
-                  },
-                  {
-                    header: "Plugin Name",
-                    accessor: (p: ConsolidatedPlugin) => (
-                      <div className="font-semibold text-gray-900 flex items-center space-x-2">
-                        <span>{p.name}</span>
-                        {p.is_favorite && <span className="text-[10px] bg-red-50 px-1 py-0.5 rounded text-red-500 font-bold uppercase tracking-wider shrink-0 select-none">Pref</span>}
+                        <button
+                          onClick={e => { e.stopPropagation(); handleToggleFavorite(p.id); }}
+                          className={`p-1 rounded hover:bg-gray-100 mr-2 shrink-0 transition-colors ${p.favorite ? "text-red-500" : "text-gray-300 hover:text-gray-400"}`}
+                        >
+                          <Heart size={13} fill={p.favorite ? "#EF4444" : "none"} />
+                        </button>
+                        <div className="flex-1 min-w-0 mr-4">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-sm font-semibold text-gray-900 truncate">{p.name}</span>
+                            {p.favorite && <span className="text-[9px] bg-red-50 px-1 py-0.5 rounded text-red-500 font-bold uppercase tracking-wider shrink-0 select-none">Pref</span>}
+                          </div>
+                        </div>
+                        <div className="w-36 shrink-0 mr-2">
+                          <Badge variant="neutral">{p.category}</Badge>
+                        </div>
+                        <div className="w-32 shrink-0 flex flex-wrap gap-1 mr-2">
+                          {p.formats.map((fmt, idx) => {
+                            const v: "primary" | "neutral" | "secondary" | "warning" =
+                              fmt.format === "VST3" ? "primary" :
+                              fmt.format === "AU" ? "neutral" :
+                              fmt.format === "VST2" ? "secondary" : "warning";
+                            return <Badge key={idx} variant={v} className="font-mono text-[9px] px-1.5 py-0">{fmt.format}</Badge>;
+                          })}
+                        </div>
+                        <div className="w-44 shrink-0 truncate text-xs text-gray-400 font-mono">
+                          {p.notes ? p.notes : p.tags.length > 0 ? p.tags.join(", ") : "—"}
+                        </div>
                       </div>
-                    ),
-                  },
-                  {
-                    header: "Vendor",
-                    accessor: (p: ConsolidatedPlugin) => <span className="text-gray-500 font-medium">{p.vendor}</span>,
-                  },
-                  {
-                    header: "Category",
-                    accessor: (p: ConsolidatedPlugin) => <Badge variant="neutral">{p.category}</Badge>,
-                  },
-                  {
-                    header: "Formats",
-                    accessor: (p: ConsolidatedPlugin) => (
-                      <div className="flex flex-wrap gap-1">
-                        {p.formats.map((fmt, idx) => {
-                          const v: "primary" | "neutral" | "secondary" | "warning" =
-                            fmt.format === "VST3" ? "primary" :
-                            fmt.format === "AU" ? "neutral" :
-                            fmt.format === "VST2" ? "secondary" : "warning";
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {vendorGroups.map(([vendor, plugins]) => {
+                const isExpanded = expandedVendors.has(vendor);
+                return (
+                  <div key={vendor}>
+                    <button
+                      onClick={() => toggleVendor(vendor)}
+                      className="flex items-center space-x-2 mb-3 select-none group"
+                    >
+                      <ChevronRight
+                        size={14}
+                        className={`text-gray-400 transition-transform duration-150 ${isExpanded ? "rotate-90" : ""}`}
+                      />
+                      <span className="text-sm font-bold text-gray-700 tracking-tight">{vendor}</span>
+                      <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full font-semibold">
+                        {plugins.length}
+                      </span>
+                    </button>
+
+                    {isExpanded && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {plugins.map(p => {
+                          const isSelected = selectedPluginId === p.id;
                           return (
-                            <Badge key={idx} variant={v} className="font-mono text-[9px] px-1.5 py-0">
-                              {fmt.format}
-                            </Badge>
+                            <Card
+                              key={p.id}
+                              hoverable
+                              onClick={() => selectPlugin(p)}
+                              className={`cursor-pointer transition-all duration-200 border text-left flex flex-col justify-between h-44 ${
+                                isSelected
+                                  ? "border-[#0F5B59] ring-2 ring-teal-500/10 bg-teal-50/5"
+                                  : "border-gray-200/60 hover:border-gray-300 bg-white"
+                              }`}
+                            >
+                              <div className="p-4 flex-1">
+                                <div className="flex items-start justify-between">
+                                  <div className="min-w-0 flex-1 mr-2">
+                                    <h4 className="text-sm font-bold text-gray-900 leading-tight mb-1 truncate">{p.name}</h4>
+                                  </div>
+                                  <button
+                                    onClick={e => { e.stopPropagation(); handleToggleFavorite(p.id); }}
+                                    className={`p-1.5 rounded duration-150 transition-colors cursor-pointer shrink-0 ${p.favorite ? "text-red-500" : "text-gray-300 hover:bg-gray-50"}`}
+                                  >
+                                    <Heart size={14} fill={p.favorite ? "#EF4444" : "none"} />
+                                  </button>
+                                </div>
+                                <div className="mt-3.5 flex flex-wrap gap-1">
+                                  {p.formats.map((fmt, idx) => (
+                                    <span key={idx} className="text-[10px] font-mono font-bold bg-gray-100 hover:bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded leading-none">
+                                      {fmt.format}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                              <div className="px-4 py-2.5 bg-[#F7F8FA] border-t border-gray-100 flex items-center justify-between">
+                                <Badge variant="neutral" className="text-[10px] leading-none">{p.category}</Badge>
+                                <span className="text-[9px] font-mono font-medium text-gray-400 truncate max-w-[100px]">
+                                  {p.formats[0]?.file_name ?? ""}
+                                </span>
+                              </div>
+                            </Card>
                           );
                         })}
                       </div>
-                    ),
-                  },
-                  {
-                    header: "Notes / Tags",
-                    accessor: (p: ConsolidatedPlugin) => (
-                      <div className="max-w-[200px] truncate text-xs text-gray-400 font-mono">
-                        {p.notes ? p.notes : p.tags.length > 0 ? p.tags.join(", ") : "—"}
-                      </div>
-                    ),
-                  },
-                ]}
-                data={filteredPlugins}
-                onRowClick={p => selectPlugin(p)}
-                selectedId={selectedPluginId ?? ""}
-                rowIdAccessor={p => p.id}
-              />
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredPlugins.map(p => {
-                const isSelected = selectedPluginId === p.id;
-                return (
-                  <Card
-                    key={p.id}
-                    hoverable
-                    onClick={() => selectPlugin(p)}
-                    className={`cursor-pointer transition-all duration-200 border text-left flex flex-col justify-between h-44 ${
-                      isSelected
-                        ? "border-[#0F5B59] ring-2 ring-teal-500/10 bg-teal-50/5"
-                        : "border-gray-200/60 hover:border-gray-300 bg-white"
-                    }`}
-                  >
-                    <div className="p-4 flex-1">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <h4 className="text-sm font-bold text-gray-900 leading-tight mb-1 truncate max-w-[160px]">{p.name}</h4>
-                          <span className="text-xs text-gray-400 font-medium block">{p.vendor}</span>
-                        </div>
-                        <button
-                          onClick={e => { e.stopPropagation(); handleToggleFavorite(p.id); }}
-                          className={`p-1.5 rounded duration-150 transition-colors cursor-pointer ${p.is_favorite ? "text-red-500" : "text-gray-300 hover:bg-gray-50"}`}
-                        >
-                          <Heart size={14} fill={p.is_favorite ? "#EF4444" : "none"} />
-                        </button>
-                      </div>
-                      <div className="mt-3.5 flex flex-wrap gap-1">
-                        {p.formats.map((fmt, idx) => (
-                          <span key={idx} className="text-[10px] font-mono font-bold bg-gray-100 hover:bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded leading-none">
-                            {fmt.format}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="px-4 py-2.5 bg-[#F7F8FA] border-t border-gray-100 flex items-center justify-between">
-                      <Badge variant="neutral" className="text-[10px] leading-none">{p.category}</Badge>
-                      <span className="text-[9px] font-mono font-medium text-gray-400">
-                        {p.formats[0]?.version ?? ""}
-                      </span>
-                    </div>
-                  </Card>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -1115,9 +1169,17 @@ export default function App() {
         </div>
       </main>
 
-      {/* RIGHT INSPECTOR */}
-      <aside className="w-96 bg-white border-l border-[#E5E7EB] flex flex-col z-20 select-text shrink-0 pb-1 h-screen">
-        {activePlugin ? (
+      {/* RIGHT INSPECTOR — slides in from right */}
+      {activePlugin && (
+        <div
+          className="fixed inset-0 z-30"
+          onClick={() => setSelectedPluginId(null)}
+        />
+      )}
+      <aside className={`fixed top-0 right-0 h-screen w-96 bg-white border-l border-[#E5E7EB] flex flex-col z-40 select-text shadow-2xl transition-transform duration-300 ease-in-out ${
+        activePlugin ? "translate-x-0" : "translate-x-full"
+      }`}>
+        {activePlugin && (
           <div className="flex flex-col h-full">
             <div className="px-5 py-4 border-b border-gray-100 bg-[#F7F8FA]/30 flex items-center justify-between">
               <div className="flex items-center space-x-2">
@@ -1125,15 +1187,20 @@ export default function App() {
                 <span className="text-base font-bold text-[#111827]">Details</span>
               </div>
               <div className="flex items-center space-x-1">
-                <Tooltip content={activePlugin.is_favorite ? "Remove favorite" : "Set as favorite"}>
-                  <IconButton size="sm" variant={activePlugin.is_favorite ? "active" : "ghost"}
+                <Tooltip content={activePlugin.favorite ? "Remove favorite" : "Set as favorite"}>
+                  <IconButton size="sm" variant={activePlugin.favorite ? "active" : "ghost"}
                     onClick={() => handleToggleFavorite(activePlugin.id)}>
-                    <Heart size={15} fill={activePlugin.is_favorite ? "#0F5B59" : "none"} />
+                    <Heart size={15} fill={activePlugin.favorite ? "#0F5B59" : "none"} />
                   </IconButton>
                 </Tooltip>
-                <Tooltip content={activePlugin.is_hidden ? "Restore plugin" : "Hide plugin"}>
+                <Tooltip content={activePlugin.hidden ? "Restore plugin" : "Hide plugin"}>
                   <IconButton size="sm" onClick={() => handleToggleHide(activePlugin.id)}>
                     <EyeOff size={15} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip content="Close">
+                  <IconButton size="sm" variant="ghost" onClick={() => setSelectedPluginId(null)}>
+                    <X size={15} />
                   </IconButton>
                 </Tooltip>
               </div>
@@ -1206,18 +1273,13 @@ export default function App() {
                     <div key={idx} className="space-y-1.5 pb-2.5 last:pb-0 border-b border-gray-200/50 last:border-0">
                       <div className="flex items-center justify-between">
                         <Badge variant={fmt.format === "AAX" ? "warning" : "primary"}>{fmt.format}</Badge>
-                        <span className="text-[10px] font-mono text-gray-500 font-semibold">{fmt.version ?? ""}</span>
+                        <span className="text-[10px] font-mono text-gray-500 font-semibold">{fmt.file_name ?? ""}</span>
                       </div>
                       <div className="text-[10px] text-gray-500 font-mono break-all leading-tight">
                         <div className="text-gray-400 uppercase text-[9px] font-bold tracking-wider mb-0.5">Location</div>
-                        {fmt.path}
+                        {fmt.file_path}
                       </div>
-                      {fmt.architecture && (
-                        <div className="text-[9px] font-semibold text-gray-400 font-mono">
-                          Arch: <span className="text-gray-700">{fmt.architecture}</span>
-                        </div>
-                      )}
-                      {!fmt.is_loadable_outside && (
+                      {fmt.format === "AAX" && (
                         <span className="text-[9px] font-bold text-amber-500 flex items-center space-x-1 select-none">
                           <AlertTriangle size={10} />
                           <span>AAX — requires Pro Tools</span>
@@ -1227,7 +1289,7 @@ export default function App() {
                         variant="secondary"
                         size="sm"
                         className="text-[9px] py-1 px-1.5 h-auto text-gray-500 hover:text-[#0F5B59] bg-white cursor-pointer hover:bg-gray-150"
-                        onClick={() => handleOpenFolder(fmt.path)}
+                        onClick={() => handleOpenFolder(fmt.file_path)}
                       >
                         <FolderOpen size={10} className="mr-1 inline" /> Open in Finder
                       </Button>
@@ -1240,11 +1302,6 @@ export default function App() {
             <div className="p-4 border-t border-gray-100 bg-[#F7F8FA]/30 text-center select-none text-[10px] text-gray-400 font-mono">
               Added: {new Date(activePlugin.created_at).toLocaleDateString()}
             </div>
-          </div>
-        ) : (
-          <div className="h-full flex flex-col items-center justify-center p-8 text-center select-none">
-            <Music size={32} className="text-gray-200 mb-2 animate-pulse" />
-            <span className="text-xs text-gray-400 font-medium">Select a plugin to inspect and edit its metadata.</span>
           </div>
         )}
       </aside>
@@ -1294,7 +1351,7 @@ export default function App() {
                   <div key={sf.id} className="py-2.5 flex items-center justify-between text-xs hover:bg-gray-50/50 transition-colors rounded px-2">
                     <div className="flex items-center space-x-2.5 min-w-0">
                       <FolderOpen size={14} className="text-teal-600 shrink-0" />
-                      <span className="text-gray-700 font-mono truncate">{sf.path}</span>
+                      <span className="text-gray-700 font-mono truncate">{sf.folder_path}</span>
                     </div>
                     <button
                       onClick={() => handleRemoveFolder(sf.id)}

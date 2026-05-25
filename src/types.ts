@@ -20,10 +20,12 @@ export type PluginFormatType = "VST2" | "VST3" | "AU" | "AAX";
 export interface PluginEntry {
   id: string;
   name: string;
+  normalized_name: string;
   vendor: string;
   category: PluginCategory;
-  is_favorite: boolean;
-  is_hidden: boolean;
+  favorite: boolean;
+  hidden: boolean;
+  description: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -33,18 +35,18 @@ export interface PluginFormatEntry {
   id: string;
   plugin_id: string;
   format: PluginFormatType;
-  path: string;
-  version: string | null;
-  architecture: string | null;
-  is_loadable_outside: boolean;
-  last_scanned: string;
+  file_path: string;
+  file_name: string | null;
+  file_size: number | null;
+  bundle_id: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 // Table: scan_folders
 export interface ScanFolderEntry {
   id: string;
-  path: string;
-  is_enabled: boolean;
+  folder_path: string;
   created_at: string;
 }
 
@@ -64,7 +66,7 @@ export interface PluginTagEntry {
 export interface NoteEntry {
   id: string;
   plugin_id: string;
-  content: string;
+  body: string;
   created_at: string;
   updated_at: string;
 }
@@ -74,11 +76,9 @@ export interface ScanHistoryEntry {
   id: string;
   started_at: string;
   completed_at: string | null;
-  scan_mode: "Quick Scan" | "Full Rescan" | "Custom Scan";
+  scan_mode: string;
   folders_scanned: number;
-  plugins_discovered: number;
-  plugins_added: number;
-  errors_logged: string | null;
+  plugins_found: number;
 }
 
 // Table: scan_errors
@@ -94,19 +94,19 @@ export interface ScanErrorEntry {
 export interface ConsolidatedPlugin {
   id: string;
   name: string;
+  normalized_name: string;
   vendor: string;
   category: PluginCategory;
-  is_favorite: boolean;
-  is_hidden: boolean;
+  favorite: boolean;
+  hidden: boolean;
   created_at: string;
   updated_at: string;
   formats: {
     format: PluginFormatType;
-    path: string;
-    version: string | null;
-    architecture: string | null;
-    is_loadable_outside: boolean;
-    last_scanned: string;
+    file_path: string;
+    file_name: string | null;
+    file_size: number | null;
+    bundle_id: string | null;
   }[];
   tags: string[];
   notes: string | null;
