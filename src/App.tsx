@@ -298,7 +298,7 @@ export default function App() {
       (data ?? []).map(f => ({
         id: f.id,
         path: f.path,
-        is_custom: f.is_custom,
+
         is_enabled: f.is_enabled ?? true,
         created_at: f.created_at,
       }))
@@ -646,13 +646,17 @@ export default function App() {
 
     const { data, error } = await supabase
       .from("scan_folders")
-      .insert({ path: chosen, is_custom: true, is_enabled: true, user_id: user.id })
+      .insert({ path: chosen, is_enabled: true, user_id: user.id })
       .select()
       .single();
 
-    if (error) { showToast("Failed to save folder.", "error"); return; }
+    if (error) {
+      console.error("scan_folders insert failed:", error.code, error.message, error.details);
+      showToast(`Failed to save folder: ${error.message}`, "error");
+      return;
+    }
     setScanFolders(prev => [...prev, {
-      id: data.id, path: data.path, is_custom: data.is_custom,
+      id: data.id, path: data.path,
       is_enabled: data.is_enabled ?? true, created_at: data.created_at,
     }]);
     showToast("Folder added to scan list.");
@@ -674,12 +678,12 @@ export default function App() {
       if (already) continue;
       const { data } = await supabase
         .from("scan_folders")
-        .insert({ path: p, is_custom: false, is_enabled: true, user_id: user.id })
+        .insert({ path: p, is_enabled: true, user_id: user.id })
         .select()
         .single();
       if (data) {
         setScanFolders(prev => [...prev, {
-          id: data.id, path: data.path, is_custom: data.is_custom,
+          id: data.id, path: data.path,
           is_enabled: data.is_enabled ?? true, created_at: data.created_at,
         }]);
         added++;
@@ -1291,9 +1295,6 @@ export default function App() {
                     <div className="flex items-center space-x-2.5 min-w-0">
                       <FolderOpen size={14} className="text-teal-600 shrink-0" />
                       <span className="text-gray-700 font-mono truncate">{sf.path}</span>
-                      {!sf.is_custom && (
-                        <span className="text-[8px] bg-gray-100 px-1 py-0.5 rounded text-gray-400 uppercase font-bold shrink-0">Default</span>
-                      )}
                     </div>
                     <button
                       onClick={() => handleRemoveFolder(sf.id)}

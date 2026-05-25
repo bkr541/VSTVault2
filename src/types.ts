@@ -44,7 +44,6 @@ export interface PluginFormatEntry {
 export interface ScanFolderEntry {
   id: string;
   path: string;
-  is_custom: boolean;
   is_enabled: boolean;
   created_at: string;
 }
